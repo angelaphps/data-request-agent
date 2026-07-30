@@ -1,0 +1,67 @@
+name: user_revenue_summary
+table: user_revenue_summary
+schema: marts
+description: >
+  Per-user revenue summary — plan, payments, and lifetime revenue.
+  Prefer this mart for revenue-by-country over joining payments when possible.
+owner: beam-neb0
+sensitivity: internal
+
+fields:
+  - name: user_id
+    type: integer
+    description: User id
+    role: relationship
+    related_table: users
+    related_field: user_id
+    sensitivity: none
+
+  - name: country
+    type: varchar
+    description: User country (US, EU, India, Rest)
+    role: dimension
+    sensitivity: internal
+
+  - name: signup_date
+    type: timestamp
+    description: Signup timestamp
+    role: dimension
+    sensitivity: none
+
+  - name: plan
+    type: varchar
+    description: Current / attributed plan
+    role: dimension
+    sensitivity: internal
+
+  - name: total_payments
+    type: integer
+    description: Count of payments
+    role: measure
+    sensitivity: internal
+
+  - name: total_revenue_usd
+    type: numeric
+    description: Lifetime revenue in USD
+    role: measure
+    sensitivity: internal
+
+  - name: last_payment_date
+    type: timestamp
+    description: Most recent payment timestamp
+    role: dimension
+    sensitivity: none
+
+measures:
+  - name: mart_total_revenue
+    formula: SUM(total_revenue_usd)
+    description: Sum of lifetime revenue in the mart
+
+golden_queries:
+  - name: revenue_by_country_mart
+    description: Total revenue by country from the mart
+    sql: |
+      SELECT country, SUM(total_revenue_usd) AS total_revenue_usd
+      FROM marts.user_revenue_summary
+      GROUP BY country
+      ORDER BY total_revenue_usd DESC

@@ -1,0 +1,41 @@
+name: users
+table: users
+schema: public
+description: >
+  App users. One row per user — signup, country, and device. device_type values
+  are exactly Android, iOS, Web (Web ≈ desktop/browser). Join from sessions,
+  subscriptions, or revenue marts on user_id.
+owner: beam-neb0
+sensitivity: internal
+
+fields:
+  - name: user_id
+    type: integer
+    description: Stable user primary key
+    role: entity
+    sensitivity: none
+
+  - name: signup_date
+    type: timestamp
+    description: Account signup timestamp
+    role: dimension
+    sensitivity: none
+
+  - name: country
+    type: varchar
+    description: User country (US, EU, India, Rest)
+    role: dimension
+    sensitivity: internal
+
+  - name: device_type
+    type: varchar
+    description: >
+      Primary device at signup. Allowed values Android, iOS, Web.
+      Web = desktop/browser. Flagged personal on approval cards.
+    role: dimension
+    sensitivity: personal
+
+measures:
+  - name: user_count
+    formula: COUNT(user_id)
+    description: Number of users

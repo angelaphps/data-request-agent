@@ -1,0 +1,100 @@
+# Sessions — one row per activity session.
+# Prefer this relation-aware shape: fields + related_table + measures + golden_queries.
+name: sessions
+table: sessions
+schema: public
+description: >
+  One row per user activity session, capturing duration and what the user did.
+  Join to users on user_id for device or country. Prefer marts for rollups when
+  possible.
+owner: beam-neb0
+sensitivity: internal
+
+fields:
+  - name: session_id
+    type: integer
+    description: Unique identifier for each session
+    role: entity
+    sensitivity: none
+
+  - name: user_id
+    type: integer
+    description: Links each session to the user who performed it
+    role: relationship
+    related_table: users
+    related_field: user_id
+    sensitivity: none
+
+  - name: session_date
+    type: timestamp
+    description: The date and time when the session occurred
+    role: dimension
+    sensitivity: none
+
+  - name: duration_minutes
+    type: integer
+    description: Length of the session in minutes
+    role: measure
+    sensitivity: internal
+
+  - name: activity_type
+    type: varchar
+    description: Kind of activity in the session (e.g. browse, watch, create)
+    role: dimension
+    sensitivity: internal
+
+measures:
+  - name: total_sessions
+    formula: COUNT(session_id)
+    description: Total number of sessions
+
+  - name: total_session_minutes
+    formula: SUM(duration_minutes)
+    description: Total time spent across all sessions, in minutes
+
+  - name: avg_session_duration
+    formula: AVG(duration_minutes)
+    description: Average session length in minutes
+
+golden_queries:
+  - name: avg_session_duration_by_device
+    description: Average session length in minutes, broken down by the user's device type
+    sql: |
+      SELECT u.device_type,
+             AVG(s.duration_minutes) AS avg_duration_minutes
+      FROM public.sessions s
+      JOIN public.users u ON s.user_id = u.user_id
+      GROUP BY u.device_type
+      ORDER BY avg_duration_minutes DESC
+
+  - name: sessions_by_activity_last_365_days
+    description: Session count and total minutes per activity type over the last year
+    sql: |
+      SELECT activity_type,
+             COUNT(session_id) AS session_count,
+             SUM(duration_minutes) AS total_minutes
+      FROM public.sessions
+      WHERE session_date >= CURRENT_DATE - INTERVAL '365 days'
+      GROUP BY activity_type
+      ORDER BY session_count DESC
+
+  - name: top_users_by_longest_session
+    description: Top 10 users by longest single session (minutes)
+    sql: |
+      SELECT user_id,
+             MAX(duration_minutes) AS max_duration_minutes
+      FROM public.sessions
+      GROUP BY user_id
+      ORDER BY max_duration_minutes DESC
+      LIMIT 10
+
+  - name: sessions_per_user
+    description: Number of sessions and total engagement time per user
+    sql: |
+      SELECT user_id,
+             COUNT(session_id) AS session_count,
+             SUM(duration_minutes) AS total_minutes
+      FROM public.sessions
+      GROUP BY user_id
+      ORDER BY session_count DESC
+      LIMIT 100

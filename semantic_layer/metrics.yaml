@@ -1,0 +1,54 @@
+# Metrics catalog — name · plain-English definition · expression
+# Expressions are illustrative; the planner must still emit inspectable SQL.
+metrics:
+  - name: active_subscriptions
+    definition: Count of subscriptions currently marked active.
+    expression: "COUNT(*) FILTER (WHERE status = 'active')"
+    dataset: subscriptions
+
+  - name: total_revenue_usd
+    definition: Sum of all payment amounts in USD (global, all countries).
+    expression: "SUM(amount_usd)"
+    dataset: payments
+
+  - name: revenue_by_country
+    definition: >
+      Total user revenue in USD by country (US, EU, India, Rest), from the
+      user_revenue_summary mart. Use when asked how much money a country
+      brought in, or revenue for US/EU/India users.
+    expression: "SUM(total_revenue_usd) GROUP BY country"
+    dataset: user_revenue_summary
+
+  - name: users_by_country
+    definition: >
+      Number of users grouped by country (US, EU, India, Rest). Use for
+      questions like how many users from the US.
+    expression: "COUNT(*) GROUP BY country"
+    dataset: users
+
+  - name: latest_dau
+    definition: Most recent daily active user count from activity marts.
+    expression: "dau ORDER BY date DESC LIMIT 1"
+    dataset: user_activity_metrics
+
+  - name: session_duration_by_device
+    definition: >
+      Shortest, longest, and/or average session duration_minutes for users of
+      a device, by joining sessions to users. device_type values: Android,
+      iOS, Web (Web = desktop/browser). Use for asks like shortest/longest
+      session for desktop or Web users.
+    expression: >
+      MIN/MAX/AVG(sessions.duration_minutes) JOIN users ON user_id
+      WHERE device_type = ...
+    dataset: sessions
+
+  - name: top_users_by_session_duration
+    definition: >
+      Ranked list of users (by user_id) with the longest sessions — e.g. top 10
+      by MAX(duration_minutes) or by SUM(duration_minutes). Plain SQL over
+      public.sessions; no analysis engine required.
+    expression: >
+      SELECT user_id, MAX(duration_minutes) AS max_duration_minutes
+      FROM sessions GROUP BY user_id
+      ORDER BY max_duration_minutes DESC LIMIT N
+    dataset: sessions

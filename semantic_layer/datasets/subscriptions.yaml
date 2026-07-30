@@ -1,0 +1,50 @@
+name: subscriptions
+table: subscriptions
+schema: public
+description: User subscription periods and plan status.
+owner: beam-neb0
+sensitivity: internal
+
+fields:
+  - name: subscription_id
+    type: integer
+    description: Subscription primary key
+    role: entity
+    sensitivity: none
+
+  - name: user_id
+    type: integer
+    description: Subscribing user id
+    role: relationship
+    related_table: users
+    related_field: user_id
+    sensitivity: none
+
+  - name: plan
+    type: varchar
+    description: Plan name
+    role: dimension
+    sensitivity: internal
+
+  - name: start_date
+    type: timestamp
+    description: Subscription start
+    role: dimension
+    sensitivity: none
+
+  - name: end_date
+    type: timestamp
+    description: Subscription end (null if open)
+    role: dimension
+    sensitivity: none
+
+  - name: status
+    type: varchar
+    description: Subscription status (e.g. active)
+    role: dimension
+    sensitivity: internal
+
+measures:
+  - name: subscription_count
+    formula: COUNT(subscription_id)
+    description: Number of subscriptions

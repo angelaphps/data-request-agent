@@ -1,0 +1,37 @@
+[tool.poetry]
+name = "data-request-agent"
+version = "0.1.0"
+description = "Slack-native agent that turns data requests into approved, executed queries"
+authors = []
+readme = "README.md"
+packages = [{ include = "data_request_agent" }]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+langgraph = "*"
+langgraph-checkpoint-postgres = "*"
+pydantic = "^2"
+pydantic-settings = "^2"
+pydantic-ai = "*"
+sqlglot = "*"
+pyyaml = "^6"
+psycopg = { version = "^3", extras = ["binary"] }
+pandas = "*"
+slack-bolt = "*"
+slack-sdk = "*"
+python-dotenv = "^1"
+matplotlib = "^3.11.1"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8"
+
+[tool.poetry.scripts]
+data-request-agent = "data_request_agent.main:main"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

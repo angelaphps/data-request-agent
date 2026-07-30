@@ -1,0 +1,40 @@
+name: user_activity_metrics
+table: user_activity_metrics
+schema: marts
+description: Daily activity rollups — DAU, WAU, MAU by date.
+owner: beam-neb0
+sensitivity: none
+
+fields:
+  - name: date
+    type: date
+    description: Metric date
+    role: dimension
+    sensitivity: none
+
+  - name: dau
+    type: integer
+    description: Daily active users
+    role: measure
+    sensitivity: none
+
+  - name: wau
+    type: integer
+    description: Weekly active users
+    role: measure
+    sensitivity: none
+
+  - name: mau
+    type: integer
+    description: Monthly active users
+    role: measure
+    sensitivity: none
+
+golden_queries:
+  - name: latest_dau_row
+    description: Most recent DAU
+    sql: |
+      SELECT date, dau
+      FROM marts.user_activity_metrics
+      ORDER BY date DESC
+      LIMIT 1

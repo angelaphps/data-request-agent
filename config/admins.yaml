@@ -1,0 +1,11 @@
+# Authored admin list — seed upserts into governance.admins.
+# Runtime role checks read the table only (never this file).
+# Do not put U_REQ here.
+
+admins:
+  - slack_user_id: U_ADMIN
+    display_name: Synthetic Admin (tests)
+    role: approver
+  - slack_user_id: U0B9N7SB1CH
+    display_name: Angela
+    role: approver

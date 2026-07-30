@@ -1,0 +1,59 @@
+name: payments
+table: payments
+schema: public
+description: Individual payment events against subscriptions.
+owner: beam-neb0
+sensitivity: internal
+
+fields:
+  - name: payment_id
+    type: integer
+    description: Payment primary key
+    role: entity
+    sensitivity: none
+
+  - name: subscription_id
+    type: integer
+    description: Related subscription id
+    role: relationship
+    related_table: subscriptions
+    related_field: subscription_id
+    sensitivity: none
+
+  - name: payment_date
+    type: timestamp
+    description: When the payment was made
+    role: dimension
+    sensitivity: none
+
+  - name: amount_usd
+    type: numeric
+    description: Payment amount in USD
+    role: measure
+    sensitivity: internal
+
+  - name: method
+    type: varchar
+    description: Payment method
+    role: dimension
+    sensitivity: internal
+
+measures:
+  - name: payment_count
+    formula: COUNT(payment_id)
+    description: Number of payment events
+
+  - name: sum_amount_usd
+    formula: SUM(amount_usd)
+    description: Sum of payment amounts in USD
+
+golden_queries:
+  - name: revenue_via_subscriptions_users
+    description: Revenue by user country via payments → subscriptions → users
+    sql: |
+      SELECT u.country, SUM(p.amount_usd) AS total_revenue_usd
+      FROM public.payments p
+      JOIN public.subscriptions s ON p.subscription_id = s.subscription_id
+      JOIN public.users u ON s.user_id = u.user_id
+      GROUP BY u.country
+      ORDER BY total_revenue_usd DESC
