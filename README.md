@@ -139,25 +139,52 @@ poetry run pytest -q
 
 ---
 
-## Try these asks
+## UAT test plan
 
-**File**
+Short manual checks for Slack. Use both an **admin** and a **requester** account
+when you can. Admins watch the approval channel for cards.
 
-- `top 10 users by session times`
-- `how much revenue did the US bring in?`
+### Before you start
 
-**Analysis** (include a word like analyze / chart / trend / stats; use
-non-personal dimensions — personal columns are stripped before analysis):
+- Open a **DM** with the bot (not a public channel).
+- Know whether you are an **admin** or a **requester**.
+- Every happy path ends in the **same private DM thread** with the SQL that
+  ran and a “Data as of: …” stamp.
 
-- `analyze average session duration by country`
-- `chart total revenue by country`
+### Common path
 
-**Personal data** (as a non-admin, **file** path): ask for users including
-`device_type`, then have an admin choose **Approve without personal data** —
-the CSV should omit that column. Full **Approve** may keep it on the CSV;
-analysis still never receives it.
+DM ask → (maybe 1–2 clarifying questions) → plan preview → **Submit** or
+**Cancel**. Admins run after Submit. Requesters wait for admin **Approve** /
+**Approve without personal data** / **Reject**.
 
-In the sample warehouse, devices are `Android`, `iOS`, and `Web`.
+### Example questions by workflow
+
+| What you’re testing | Who | Example ask | What to expect |
+|---------------------|-----|-------------|----------------|
+| **File / CSV (admin, no approval)** | Admin | `top 10 users by session times` | Preview → Submit → CSV in DM |
+| **File / CSV (aggregate)** | Either | `how much revenue did the US bring in?` | CSV (or short result) + SQL + timestamp |
+| **Requester approval** | Non-admin | `top 10 users by session times` | After Submit, card in approval channel; result only after admin acts |
+| **Reject** | Non-admin + admin | Same as above, admin clicks **Reject** | Requester notified; no CSV |
+| **Cancel** | Either | Any ask, click **Cancel** on preview | Stops; no run |
+| **Analysis** | Either | `analyze average session duration by country` | Text + small table + chart (use words like analyze / chart / trend / stats) |
+| **Analysis (chart)** | Either | `chart total revenue by country` | Same analysis-style reply |
+| **Personal data — strip** | Non-admin + admin | `users sample with device_type` (or “users including device type”) | Card shows personal flag → **Approve without personal data** → CSV **without** `device_type` |
+| **Personal data — keep on CSV** | Non-admin + admin | Same ask → **Approve** | CSV **may include** `device_type`; analysis path would still never keep PII |
+| **Clarify** | Either | Something vague, e.g. `session stuff` or `give me the numbers` | Bot asks ≤2 clarifying questions before a plan |
+| **Public redirect** | Anyone | @mention the bot in a **public** channel | Bot does **not** run there; asks you to DM it |
+
+**Sample warehouse tip:** devices are `Android`, `iOS`, `Web`. Prefer
+**country** for analysis demos; `device_type` is flagged personal (good for
+approval / CSV tests).
+
+### Quick pass/fail checklist
+
+- [ ] Results only appear in the requester’s private DM
+- [ ] Preview has plan + SQL (not a sample of real rows)
+- [ ] Non-admin needs approval; admin does not
+- [ ] Analysis asks produce chart/table path, not only a silent CSV
+- [ ] “Approve without personal data” removes personal columns from the CSV
+- [ ] Public @mention does not leak data into the channel
 
 ---
 
