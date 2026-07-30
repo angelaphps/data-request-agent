@@ -58,7 +58,7 @@ flowchart LR
 ```
 
 **Next coding focus:** Stage 4 → Stage 5 (smarter / conversational analysis).
-See [README — Next stages](README.md#next-stages-of-the-mvp).
+See [README — Next stages](README.md#next-stages).
 
 ---
 
