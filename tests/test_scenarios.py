@@ -270,22 +270,22 @@ def test_06_analysis_path(settings, gov, memory_dest):
         return ParsedAsk(
             status="ok",
             intent=raw_text,
-            metric_name="session_duration_by_device",
+            metric_name="session_duration_by_country",
             wants_analysis=True,
         )
 
     def draft_sql(parsed: ParsedAsk) -> DraftPlan:
         return DraftPlan(
             sql=(
-                "SELECT u.device_type, AVG(s.duration_minutes) AS avg_duration_minutes "
+                "SELECT u.country, AVG(s.duration_minutes) AS avg_duration_minutes "
                 "FROM public.sessions s "
                 "JOIN public.users u ON s.user_id = u.user_id "
-                "GROUP BY u.device_type "
+                "GROUP BY u.country "
                 "ORDER BY avg_duration_minutes DESC"
             ),
-            plain_language="Average session duration by device type.",
-            definitions=["avg session duration by device"],
-            columns=["device_type", "avg_duration_minutes"],
+            plain_language="Average session duration by country.",
+            definitions=["avg session duration by country"],
+            columns=["country", "avg_duration_minutes"],
         )
 
     runtime = AgentRuntime(
@@ -308,7 +308,7 @@ def test_06_analysis_path(settings, gov, memory_dest):
                 "requester_slack_id": "U_ADMIN",
                 "channel_id": "D_ADMIN",
                 "thread_ts": "606.1",
-                "raw_text": "analyze average session duration by device",
+                "raw_text": "analyze average session duration by country",
             },
             config,
         )
@@ -321,8 +321,72 @@ def test_06_analysis_path(settings, gov, memory_dest):
         assert payload.get("wants_analysis") is True
         assert payload.get("csv") is None
         assert payload.get("text")
-        # device_type is personal — admin auto-approve keeps it; chart optional
+        # Analysis frame must not carry personal columns (device_type).
+        guarded = final.get("guarded_rows") or []
+        if guarded:
+            assert "device_type" not in guarded[0]
         assert "Data as of:" in (final.get("delivery_message") or "")
+
+
+def test_06b_analysis_never_keeps_personal_even_if_approved(settings, gov, memory_dest):
+    """Approved personal columns stay on CSV path only — not analysis / LLM frame."""
+    from data_request_agent.analysis import heuristic_analysis_plan
+    from data_request_agent.delivery import guard_and_deliver
+
+    state = guard_and_deliver(
+        {
+            "requester_slack_id": "U_ADMIN",
+            "channel_id": "D_ADMIN",
+            "thread_ts": "606.2",
+            "result_rows": [
+                {
+                    "user_id": 1,
+                    "country": "US",
+                    "device_type": "iOS",
+                    "avg_duration_minutes": 12.5,
+                }
+            ],
+            "plan": {
+                "plain_language_plan": "sample with personal device",
+                "wants_analysis": True,
+                "approved_columns": [
+                    "user_id",
+                    "country",
+                    "device_type",
+                    "avg_duration_minutes",
+                ],
+                "trial_columns": [
+                    "user_id",
+                    "country",
+                    "device_type",
+                    "avg_duration_minutes",
+                ],
+            },
+            "approved": {
+                "status": "approved",
+                "plan": {
+                    "plain_language_plan": "sample with personal device",
+                    "wants_analysis": True,
+                    "approved_columns": [
+                        "user_id",
+                        "country",
+                        "device_type",
+                        "avg_duration_minutes",
+                    ],
+                },
+            },
+        },
+        gov=gov,
+        destination=memory_dest,
+        settings=settings,
+        plan_analysis=heuristic_analysis_plan,
+    )
+    assert state.get("phase") == "delivered"
+    guarded = state.get("guarded_rows") or []
+    assert guarded
+    assert "device_type" not in guarded[0]
+    assert "country" in guarded[0]
+    assert "device_type" in (state.get("delivery_message") or "").lower()
 
 
 def test_07_results_check_retry_then_honest(settings, gov, runtime, memory_dest):

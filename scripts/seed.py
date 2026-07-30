@@ -1,7 +1,7 @@
 """Seed admins + semantic catalog into the local governance database.
 
-Business/tabular rows live in BUSINESS_DATABASE_URL (e.g. Render beam_neb0)
-and are not copied here.
+Business/tabular rows live in the business store (MVP: dummy Postgres via
+`BUSINESS_DATABASE_URL`; post-MVP: BigQuery) and are not copied here.
 """
 
 from __future__ import annotations

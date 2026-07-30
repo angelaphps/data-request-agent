@@ -3,6 +3,11 @@
 Stage 3 analysis reply: threaded text answer + inline markdown summary
 table (≤ settings.analysis_summary_max_rows) + chart PNG. Full row
 dumps remain file delivery when analysis is not requested.
+
+Personal columns: CSV may keep them when the approval covers them (e.g. a
+contact list). Analysis engines and LMs never receive personal columns —
+they always run on a PII-stripped frame, including future conversational /
+PandasAI paths.
 """
 
 from __future__ import annotations
@@ -30,6 +35,24 @@ ANALYSIS_MOCK_NOTICE = (
 )
 
 
+def _drop_personal_columns(
+    rows: list[dict[str, Any]],
+    personal_cols: set[str],
+) -> tuple[list[dict[str, Any]], set[str]]:
+    """Return rows with catalog personal columns removed, plus names dropped."""
+    hidden: set[str] = set()
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        new_row: dict[str, Any] = {}
+        for key, value in row.items():
+            if key.lower() in personal_cols:
+                hidden.add(key)
+                continue
+            new_row[key] = value
+        out.append(new_row)
+    return out, hidden
+
+
 def guard_and_deliver(
     state: AgentState,
     *,
@@ -52,7 +75,8 @@ def guard_and_deliver(
             if sens == "personal":
                 personal_cols.add(name.lower())
 
-    guarded: list[dict[str, Any]] = []
+    # File path: keep personal columns only when the approval covers them.
+    file_guarded: list[dict[str, Any]] = []
     hidden: set[str] = set()
     for row in rows:
         new_row: dict[str, Any] = {}
@@ -68,7 +92,7 @@ def guard_and_deliver(
                 hidden.add(key)
                 continue
             new_row[key] = value
-        guarded.append(new_row)
+        file_guarded.append(new_row)
 
     wants_analysis = bool(plan.get("wants_analysis"))
     read_at = datetime.now(timezone.utc).isoformat()
@@ -78,22 +102,36 @@ def guard_and_deliver(
     )
 
     if wants_analysis:
+        # Analysis / LLM path: always strip personal columns, even if approved
+        # for CSV release on the same request.
+        analysis_rows, analysis_hidden = _drop_personal_columns(
+            file_guarded, personal_cols
+        )
+        analysis_hidden |= hidden
+        analysis_note = (
+            f" (hidden personal columns: {sorted(analysis_hidden)})"
+            if analysis_hidden
+            else ""
+        )
         return _deliver_analysis(
             state,
             gov=gov,
             destination=destination,
             settings=settings,
             plan=plan,
-            guarded=guarded,
-            hidden_note=hidden_note,
+            analysis_rows=analysis_rows,
+            file_fallback_rows=file_guarded,
+            hidden_note=analysis_note,
+            file_hidden_note=hidden_note,
+            hidden_personal=sorted(analysis_hidden),
             read_at=read_at,
             plan_analysis=plan_analysis,
         )
 
-    csv_text = rows_to_csv(guarded)
+    csv_text = rows_to_csv(file_guarded)
     text = (
         f"Ran: {plan.get('plain_language_plan')}\n"
-        f"Rows: {len(guarded)}"
+        f"Rows: {len(file_guarded)}"
         f"{hidden_note}\n"
         f"Data as of: {read_at}"
     )
@@ -104,7 +142,7 @@ def guard_and_deliver(
             "text": text,
             "csv": csv_text,
             "filename": "data_request.csv",
-            "rows": guarded,
+            "rows": file_guarded,
             "analysis_mock": False,
         }
     )
@@ -112,7 +150,7 @@ def guard_and_deliver(
         "delivered",
         {
             "result_ref": ref,
-            "row_count": len(guarded),
+            "row_count": len(file_guarded),
             "hidden_personal": sorted(hidden),
             "analysis_mock": False,
             "wants_analysis": False,
@@ -124,7 +162,7 @@ def guard_and_deliver(
         "phase": "delivered",
         "result_ref": ref,
         "delivery_message": text,
-        "guarded_rows": guarded,
+        "guarded_rows": file_guarded,
         "analysis_mock": False,
     }
 
@@ -136,12 +174,15 @@ def _deliver_analysis(
     destination: Destination,
     settings: Settings,
     plan: dict[str, Any],
-    guarded: list[dict[str, Any]],
+    analysis_rows: list[dict[str, Any]],
+    file_fallback_rows: list[dict[str, Any]],
     hidden_note: str,
+    file_hidden_note: str,
+    hidden_personal: list[str],
     read_at: str,
     plan_analysis: Callable[..., AnalysisPlan] | None,
 ) -> AgentState:
-    frame = pd.DataFrame(guarded)
+    frame = pd.DataFrame(analysis_rows)
     dtypes = {c: str(frame[c].dtype) for c in frame.columns} if not frame.empty else {}
     schema = schema_slice_from_governance(
         gov,
@@ -169,13 +210,13 @@ def _deliver_analysis(
             {"error": str(exc)},
             actor_slack_id=state.get("requester_slack_id"),
         )
-        # Fall back to file rather than failing the whole request silently.
-        csv_text = rows_to_csv(guarded)
+        # Fall back to file (approval-scoped CSV may still include personal cols).
+        csv_text = rows_to_csv(file_fallback_rows)
         text = (
             f"I couldn't complete the analysis ({exc}). "
             f"Here's the data as a file instead.\n"
             f"Ran: {plan.get('plain_language_plan')}\n"
-            f"Rows: {len(guarded)}{hidden_note}\n"
+            f"Rows: {len(file_fallback_rows)}{file_hidden_note}\n"
             f"Data as of: {read_at}"
         )
         ref = destination.deliver(
@@ -185,7 +226,7 @@ def _deliver_analysis(
                 "text": text,
                 "csv": csv_text,
                 "filename": "data_request.csv",
-                "rows": guarded,
+                "rows": file_fallback_rows,
                 "analysis_mock": False,
             }
         )
@@ -194,7 +235,7 @@ def _deliver_analysis(
             "phase": "delivered",
             "result_ref": ref,
             "delivery_message": text,
-            "guarded_rows": guarded,
+            "guarded_rows": file_fallback_rows,
             "analysis_mock": False,
             "error": "analysis_plan_failed",
         }
@@ -208,7 +249,7 @@ def _deliver_analysis(
         f"{result.answer}\n\n"
         f"{result.table_markdown}\n\n"
         f"Ran: {plan.get('plain_language_plan')}\n"
-        f"Rows analysed: {len(guarded)}{hidden_note}\n"
+        f"Rows analysed: {len(analysis_rows)}{hidden_note}\n"
         f"Data as of: {read_at}"
     )
     ref = destination.deliver(
@@ -227,11 +268,12 @@ def _deliver_analysis(
         "delivered",
         {
             "result_ref": ref,
-            "row_count": len(guarded),
+            "row_count": len(analysis_rows),
             "analysis_mock": False,
             "wants_analysis": True,
             "analysis_stats": result.stats,
             "chart": bool(result.chart_png),
+            "hidden_personal": hidden_personal,
         },
         actor_slack_id=state.get("requester_slack_id"),
     )
@@ -240,7 +282,7 @@ def _deliver_analysis(
         "phase": "delivered",
         "result_ref": ref,
         "delivery_message": text,
-        "guarded_rows": guarded,
+        "guarded_rows": analysis_rows,
         "analysis_mock": False,
         "analysis_answer": result.answer,
         "analysis_table_markdown": result.table_markdown,

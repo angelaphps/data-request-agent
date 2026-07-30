@@ -35,12 +35,17 @@ Implementation stages: [`PLAN.md`](PLAN.md). Product / setup: [`README.md`](READ
 - Identity comes only from the verified Slack event; role only from the
   `governance.admins` **table**. Never from message text or YAML at runtime.
 - Results are delivered only to the requester's own private thread.
-- No data rows in any language-model context — descriptions (and
-  deliberately released aggregates/summary) only. No data rows on
-  approval cards — names, flags, and estimates only.
+- Approval cards: names, flags, and estimates only — never data rows.
+  Planning / scope LMs: descriptions and estimates only — never data rows.
+  **No personal / PII columns in any language-model or analysis-engine
+  context** (today’s analysis LM is schema-only; a future conversational
+  engine may use non-personal post-guard rows, still never personal
+  columns). **CSV / file** delivery may include personal columns when the
+  recorded approval explicitly covers them (e.g. a contact list).
 - Delivery order is fixed: **execute → results check → personal-data
   guard → then** file | analysis | future conversational engine.
-  Nothing reaches an analysis engine except through the guard.
+  Nothing reaches an analysis engine except through the guard, and the
+  analysis branch always strips personal columns again before the engine.
 - Every query passes inspection and the permission re-check before it
   runs, including retries and requests resumed after a wait.
 - The query path is read-only, enforced by the database account
@@ -49,8 +54,10 @@ Implementation stages: [`PLAN.md`](PLAN.md). Product / setup: [`README.md`](READ
   loads it into governance tables; runtime reads the **tables**. Anything
   the analysis tool receives is generated from that catalog per request —
   never a second buried semantic layer inside an analysis engine.
-- New datastores implement `stores.TabularStore`; new delivery targets
-  implement `destinations.Destination`. No parallel paths.
+- New datastores implement `stores.TabularStore` (MVP business data:
+  `PostgresStore` + dummy Postgres; post-MVP: `BigQueryStore` for the
+  production BigQuery dataset). New delivery targets implement
+  `destinations.Destination`. No parallel paths.
 - Business logic never lives in `slack_app.py` — it is a thin adapter.
 - No `TEST_MODE` or approval-bypass flags.
 

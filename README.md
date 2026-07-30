@@ -28,9 +28,10 @@ approves them.
    channel and chooses **Approve**, **Approve without personal data**, or
    **Reject**. Admins skip this for their own requests. Approvals last 48 hours.
 5. **Run** — bot re-checks permission, executes against the business database,
-   checks the result shape, and strips personal columns if approval did not
-   allow them.
+   checks the result shape, then applies the personal-data guard.
 6. **Deliver** — CSV or analysis lands only in the requester’s private DM.
+   CSV may keep personal columns when approval covers them; analysis never
+   receives personal columns (even if that request’s CSV approval would).
 
 Public-channel @mentions are ignored; the bot asks the person to DM it instead.
 
@@ -40,22 +41,28 @@ Public-channel @mentions are ignored; the bot asks the person to DM it instead.
 
 | Kind | When | What arrives in Slack |
 |------|------|------------------------|
-| **File** | Default for extract-style asks | CSV + the SQL that ran + a “data as of” timestamp |
-| **Analysis** | Ask mentions analyze / chart / trend / stats | Short answer, markdown table (≤20 rows), chart image |
+| **File** | Default for extract-style asks | CSV + the SQL that ran + a “data as of” timestamp. Personal columns only if explicitly approved (e.g. a contact list). |
+| **Analysis** | Ask mentions analyze / chart / trend / stats | Short answer, markdown table (≤20 rows), chart image — always on a **PII-stripped** frame (no personal columns to the analysis engine or LLM). |
 
 Analysis today is a one-shot summary (groupby / aggregate + bar or line chart),
-not a conversational analytics agent yet.
+not a conversational analytics agent yet (Stages 4–5).
 
 ---
 
 ## System pieces
 
-Two databases:
+Two databases today:
 
 | Role | Env var | Purpose |
 |------|---------|---------|
-| Governance | `DATABASE_URL` | Admins, catalog, approvals, audit log, saved request state |
-| Business | `BUSINESS_DATABASE_URL` | The data the SQL actually queries |
+| Governance | `DATABASE_URL` | Admins, catalog, approvals, audit log, saved request state (local Postgres) |
+| Business | `BUSINESS_DATABASE_URL` | Dummy Postgres warehouse the SQL queries for the MVP |
+
+Business data is reached through `stores.TabularStore`. **MVP:**
+`PostgresStore` + the dummy Postgres URL. **Post-MVP:** the same spine
+reads a **BigQuery** dataset via `BigQueryStore` (stub in `stores.py` —
+not wired yet). Planner, approval, guard, and delivery stay put; only the
+store adapter and catalog/SQL dialect work change.
 
 The **semantic layer** (`semantic_layer/*.yaml`) defines tables, columns,
 joins, measures, and example queries. `scripts/seed.py` loads that YAML and
@@ -64,7 +71,10 @@ those **tables** — edit YAML, then re-seed.
 
 Language models draft the request scope, the SQL, and (for analysis) the chart
 plan. Deterministic checks always follow: SQL inspection, trial run,
-permission re-check, and the personal-data guard before delivery.
+permission re-check, and the personal-data guard before delivery. **Nothing
+with personal / PII columns reaches an analysis engine or LLM** — including
+the upcoming conversational / PandasAI path. Explicit admin approval remains
+the path for releasing personal columns in **CSV** exports.
 
 The bot uses Slack **Socket Mode** (outbound connection). No public URL is
 required for demos; workspace members can use it while the process is online.
@@ -75,7 +85,8 @@ required for demos; workspace members can use it while the process is online.
 
 **You need:** Python 3.11+, [Poetry](https://python-poetry.org/), local
 Postgres (governance), a Slack app with Socket Mode, an OpenAI API key, and a
-business Postgres database.
+**dummy business Postgres** URL for the MVP (`BUSINESS_DATABASE_URL`).
+Production BigQuery comes later behind the same store seam.
 
 ```bash
 git clone https://github.com/angelaphps/data-request-agent.git
@@ -92,7 +103,7 @@ Fill in `.env`:
 | `SLACK_APP_TOKEN` | Socket Mode app token (`xapp-…`) |
 | `ADMIN_CHANNEL_ID` | Approval channel ID (`C…`, not `#name`) |
 | `DATABASE_URL` | Local governance DB |
-| `BUSINESS_DATABASE_URL` | Business / warehouse DB |
+| `BUSINESS_DATABASE_URL` | Dummy business Postgres (MVP warehouse) |
 | `OPENAI_API_KEY` | OpenAI key |
 
 `SLACK_SIGNING_SECRET` is optional for Socket Mode. See `.env.example` for
@@ -135,14 +146,16 @@ poetry run pytest -q
 - `top 10 users by session times`
 - `how much revenue did the US bring in?`
 
-**Analysis** (include a word like analyze / chart / trend / stats)
+**Analysis** (include a word like analyze / chart / trend / stats; use
+non-personal dimensions — personal columns are stripped before analysis):
 
-- `analyze average session duration by device`
+- `analyze average session duration by country`
 - `chart total revenue by country`
 
-**Personal data** (as a non-admin): ask for users including `device_type`, then
-have an admin choose **Approve without personal data** — the CSV should omit
-that column.
+**Personal data** (as a non-admin, **file** path): ask for users including
+`device_type`, then have an admin choose **Approve without personal data** —
+the CSV should omit that column. Full **Approve** may keep it on the CSV;
+analysis still never receives it.
 
 In the sample warehouse, devices are `Android`, `iOS`, and `Web`.
 
@@ -168,12 +181,20 @@ Detail and gates live in [`PLAN.md`](PLAN.md).
 
 | Stage | Focus |
 |-------|--------|
-| **4** | Thread memory so analysis follow-ups stay in-thread |
-| **5** | Smarter / conversational analysis (PandasAI behind `analysis.py`) |
+| **4** | Thread memory so analysis follow-ups stay in-thread (PII-stripped context only) |
+| **5** | Smarter / conversational analysis (PandasAI behind `analysis.py`; never personal columns to the LLM) |
 | **6** | PII projection before execute; `READONLY_DATABASE_URL`; ops hardening |
+| **Later** | Swap business store to **BigQuery** (`BigQueryStore` behind `TabularStore`) |
 
 Delivery order stays fixed:
 `execute → results check → personal-data guard → file | analysis | future engine`.
+
+Split after the guard: **CSV** may include personal columns when explicitly
+approved; **analysis / LLM** always runs on a PII-stripped frame.
+
+Business data today is a **dummy Postgres**; post-MVP the query path targets a
+**BigQuery** dataset through the same adapter — not a rewrite of Slack,
+approval, or delivery.
 
 ---
 

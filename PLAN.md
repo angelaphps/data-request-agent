@@ -20,7 +20,8 @@ Product narrative and setup: [README.md](README.md). Architecture invariants:
   golden queries) → Submit/Cancel → approval (incl. **Approve without
   personal data**) → re-check → execute → results check → **guard** → deliver
 - File path (CSV) + **dumb** one-shot analysis (`analysis.py` + matplotlib)
-  on the **guarded** frame only
+  on a **PII-stripped** analysis frame (personal columns never reach analysis
+  / LLM; CSV may keep them when approval covers them)
 - Scope LLM, trend/stats → `wants_analysis`, 48h approval expiry, public
   redirect, data-as-of stamp
 - Scenario gates green (including scenario **6**); Stage 1–2 analysis mock
@@ -36,6 +37,14 @@ execute → results check → personal-data guard
 Nothing reaches any output engine except through the guard. The executor never
 feeds analysis (present or future) a raw frame.
 
+**After the guard (product split):**
+
+- **File / CSV:** personal columns allowed only when the recorded approval
+  covers them (e.g. contact list).
+- **Analysis / LLM (incl. future PandasAI):** always strip personal columns
+  again — **no PII to the analytics engine**, even if CSV approval would have
+  released them.
+
 ### Not built / deferred
 
 - Conversational follow-ups (“why is Web higher?”) / lasting thread analysis
@@ -46,6 +55,8 @@ feeds analysis (present or future) a raw frame.
 - Pre-select / rewrite to omit personal columns (today: execute then
   guard-strip)
 - Dedicated business read-only DB role (A3 still open in practice)
+- **BigQuery business store** — `BigQueryStore` stub in `stores.py`; MVP still
+  uses dummy Postgres via `BUSINESS_DATABASE_URL` / `PostgresStore`
 - Catalog admin UI; standing grants; analysis critic; shared-channel delivery
 
 ```mermaid
@@ -54,10 +65,12 @@ flowchart LR
   s4[Stage4_thread_memory]
   s5[Stage5_smarter_engine]
   s6[Stage6_pii_and_ops]
-  s0 --> s4 --> s5 --> s6
+  s7[Later_BigQuery_store]
+  s0 --> s4 --> s5 --> s6 --> s7
 ```
 
 **Next coding focus:** Stage 4 → Stage 5 (smarter / conversational analysis).
+Business warehouse remains dummy Postgres until the post-MVP BigQuery swap.
 See [README — Next stages](README.md#next-stages).
 
 ---
@@ -92,7 +105,7 @@ Set `ADMIN_CHANNEL_ID=C…` in `.env`. Invite the bot to that channel.
 | `ADMIN_CHANNEL_ID` | `C…` for `#data-request-approval` |
 | Admin YAML | Your `U…` in `config/admins.yaml` (then seed) |
 | LLM API key | pydantic-ai (scope, SQL, analysis plan) |
-| Business URL | `BUSINESS_DATABASE_URL` (e.g. Render `beam_neb0`) |
+| Business URL | `BUSINESS_DATABASE_URL` — dummy Postgres for MVP (e.g. Render `beam_neb0`); BigQuery later |
 
 ---
 
@@ -120,12 +133,12 @@ flowchart LR
 | ID | Assumption |
 |----|------------|
 | **A1** | Scenario catalog below; numbers match stage gates. |
-| **A2** | **Two databases:** local Postgres (`DATABASE_URL`) for `governance`; external business DB via `BUSINESS_DATABASE_URL`. LangGraph checkpoints via `PostgresSaver.setup()` on governance. |
+| **A2** | **Two stores:** local Postgres (`DATABASE_URL`) for `governance`; MVP business data via dummy Postgres (`BUSINESS_DATABASE_URL` + `PostgresStore`). **Post-MVP:** BigQuery dataset via `BigQueryStore` (`TabularStore` seam; stub exists). LangGraph checkpoints via `PostgresSaver.setup()` on governance. |
 | **A3** | Eventually: governance writer + business read-only SELECT. MVP may still use a shared credential for business until Stage 6. |
 | **A4** | Scenario tests use synthetic identities (`U_ADMIN` / `U_REQ`) and `Command(resume=...)`; no live Slack for gates. |
 | **A5** | Tests inject fixed proposers; inspection, trial, approval, re-check, guard, delivery always run for real. |
 | **A6** | Stage 3 analysis path is live (text + table + chart); scenario 6 is a gate. |
-| **A7** | Stage 3: plain LM + restricted runner (not PandasAI). **End goal:** conversational analysis; **PandasAI is the deferred engine** behind `analysis.py` after thread context (Stage 4) + no-row / prompt proof (Stage 5). Catalog stays upstream. |
+| **A7** | Stage 3: plain LM + restricted runner (not PandasAI). **End goal:** conversational analysis; **PandasAI is the deferred engine** behind `analysis.py` after thread context (Stage 4). Catalog stays upstream. **Invariant:** analysis / LLM never receive personal columns; CSV may when explicitly approved. Planning LMs stay description-only (no rows). |
 | **A8** | Admins authored in YAML; seed upserts into `governance.admins`; runtime reads the table only. |
 
 ### A1 — Scenario catalog (gates)
@@ -137,7 +150,8 @@ flowchart LR
 | 3 | 1 | Requester → Submit → admin Approve → file | Done |
 | 4 | 1 | Admin Reject → notify; no final execute | Done |
 | 5 | 1 | Permission re-check blocks stale/invalid permission | Done |
-| 6 | 3 | Real analysis path (text + table + chart) | Done |
+| 6 | 3 | Real analysis path (text + table + chart); no personal cols on analysis frame | Done |
+| 6b | 3 | Approved personal cols still stripped before analysis | Done |
 | 7 | 2 | Results check: mismatch → one retry → honest failure | Done |
 | 8 | 2 | 48h approval expiry + notify; public redirect; data-as-of | Done |
 | 9 | 1 | Audit events across successful requester lifecycle | Done |
@@ -245,14 +259,15 @@ label, Approve without personal data, non-admin refuse keeps waiting.
 | Switch cost | High if ripping out later | Seam `analysis.py`; PandasAI later is a swap |
 
 **Shipped for Stage 3:** plain LM + restricted runner. Analysis MVP is a **dumb
-one-shot** (groupby/agg + bar/line) on the **guarded** frame. Chart lib:
-**matplotlib**.
+one-shot** (groupby/agg + bar/line) on a **PII-stripped** frame (personal
+columns always removed before analysis). Chart lib: **matplotlib**.
 
 **End goal (Stages 4–5):** conversational analysis (follow-ups about the data
 in-thread). **PandasAI is the deferred engine for that**, swapped behind
-`analysis.py` after thread memory exists and prompt/row behavior is proven —
-catalog stays upstream, never buried inside PandasAI. Always:
-execute → results check → **guard** → engine.
+`analysis.py` after thread memory exists — catalog stays upstream, never buried
+inside PandasAI. Always:
+execute → results check → **guard** → **PII-stripped analysis frame** → engine.
+CSV remains the only path that may carry approved personal columns.
 
 ### 3.1 Replace mock behind same branch — DONE
 
@@ -271,21 +286,23 @@ execute → results check → **guard** → engine.
 **Goal:** After a chart/table, “why is Web higher?” / “what about India?” stays
 in-thread without a full new request every time.
 
-1. **Build:** Persist last **guarded** analysis context per DM thread
-   (`governance.thread_context` — migration `003` already authored; finish
-   save on analysis deliver + load on follow-up).
+1. **Build:** Persist last **analysis** context per DM thread (PII-stripped
+   frame / summary only — `governance.thread_context`; migration `003` already
+   authored; finish save on analysis deliver + load on follow-up).
 2. **Route:** In `slack_app.py`, when graph is idle and message looks like a
    follow-up and context exists → answer path; clear new extracts still start
    the full spine.
 3. **Answer:** From stored stats / summary table / prior answer first
    (`followups.py` exists as a stub — wire it). `needs_new_request` → fall
    through to full graph with a suggested ask.
-4. **Invariant:** LM still must not see pre-guard raw executor rows; prefer
-   aggregates + small summary already released by the guard.
+4. **Invariant:** Follow-up LM / engine never sees personal columns or
+   pre-guard raw executor rows; prefer aggregates + small summary already
+   released on the analysis path.
 5. **Files:** `governance.py`, `delivery.py`, `slack_app.py`, `followups.py`,
    migration `003`.
 6. **Verify:** new scenario(s) — analysis deliver → follow-up reply without new
-   approval when envelope unchanged; fresh “top 10…” still starts full spine.
+   approval when envelope unchanged; fresh “top 10…” still starts full spine;
+   stored context has no personal columns.
 7. **Deps:** none new required for heuristic path; OpenAI for LM follow-ups.
 8. **From you:** none.
 
@@ -295,32 +312,33 @@ in-thread without a full new request every time.
 
 # Stage 5 — Smarter analysis engine — AFTER STAGE 4
 
-**Goal:** Move from dumb one-shot toward conversational exploration on the
-**guarded** frame.
+**Goal:** Move from dumb one-shot toward conversational exploration on a
+**PII-stripped** analysis frame (never personal columns to the engine / LLM).
 
 ### 5.1 Expand allowlisted runner (immediate smarter win)
 
 1. **Build:** More aggs / chart types / clearer narratives in `analysis.py`
    without changing Slack/approval/guard.
 2. **Verify:** richer scenario 6 variants (multi-measure, time-ish cuts if
-   SQL returns them).
+   SQL returns them on non-personal dimensions).
 
 ### 5.2 PandasAI (or equivalent) swap — conversational engine
 
-1. **Build:** Implement behind `analysis.py` seam; input = **post-guard**
-   frame (+ Stage 4 thread context for follow-ups). Catalog remains our
-   upstream YAML→governance brief — do **not** bury a second semantic layer
+1. **Build:** Implement behind `analysis.py` seam; input = **PII-stripped
+   post-guard** frame (+ Stage 4 thread context for follow-ups). Catalog remains
+   our upstream YAML→governance brief — do **not** bury a second semantic layer
    inside PandasAI.
-2. **Gate (blocking):** Prove or document whether PandasAI puts dataframe rows
-   in prompts; if yes, configure/sandbox/limit so product invariant holds, or
-   explicitly amend PROJECT_CONTEXT for the conversational engine only.
-3. **Invariant test:** engine input is always post-guard (no raw executor
-   path).
+2. **Gate (blocking):** Prove whether PandasAI puts dataframe rows in prompts.
+   Non-personal rows may be acceptable for conversational analysis; **personal
+   columns must never appear**. Configure/sandbox/limit accordingly, or fail
+   the gate.
+3. **Invariant test:** engine input is always post-guard and PII-stripped (no
+   raw executor path; no `sensitivity: personal` columns).
 4. **Deps:** Confirm before `poetry add` (AGENTS.md).
-5. **From you:** accept prompt/row evidence or invariant amendment.
+5. **From you:** accept prompt/row evidence for the non-PII frame.
 
-**Stage 5 done when:** smarter/conversational gates pass; guard-order test
-green; catalog still single source of truth.
+**Stage 5 done when:** smarter/conversational gates pass; no-personal-to-engine
+test green; catalog still single source of truth.
 
 ---
 
@@ -334,6 +352,31 @@ green; catalog still single source of truth.
 
 **Stage 6 done when:** strip-or-project behavior covered by tests; read-only
 execute path documented and used when URL set.
+
+---
+
+# Later — BigQuery business store (post-MVP)
+
+**Goal:** Point the query path at a real BigQuery dataset without rewriting
+Slack, approval, guard, or delivery.
+
+1. **Build:** Implement `BigQueryStore` (`stores.py` stub today): execute,
+   headings / dry-run, estimate, timeouts / row caps appropriate to BQ.
+2. **Wire:** Settings / factory choose BigQuery when configured (credential
+   *name* in catalog/env — never the secret itself); keep `PostgresStore` for
+   local/demo.
+3. **Catalog / SQL:** Update semantic layer + inspect/draft assumptions for
+   BigQuery dialect / dataset.table naming as needed; golden queries must
+   match the BQ schemas.
+4. **Invariant:** Same delivery order and PII split; only the `TabularStore`
+   implementation changes under planner / execution.
+5. **Deps:** Confirm before `poetry add` (e.g. google-cloud-bigquery).
+6. **Verify:** smoke + scenario gates against a BQ sandbox dataset; dummy
+   Postgres path still works for local demos.
+
+**Done when:** production asks run against BigQuery through the adapter;
+governance remains local Postgres; scenario gates green on both stores or
+documented CI matrix.
 
 ---
 
@@ -355,6 +398,6 @@ execute path documented and used when URL set.
 | # | Question | Status |
 |---|----------|--------|
 | 1 | Can `PostgresSaver` use schema `governance`? | Open / low priority — works on default search_path today |
-| 2 | Does PandasAI put dataframe rows in prompts? | **Stage 5 gate** — must answer before swap |
+| 2 | Does PandasAI put dataframe rows in prompts? | **Stage 5 gate** — non-PII rows may be OK; personal columns never |
 | 3 | Sync Socket Mode + `invoke` vs async | Decided for MVP: sync invoke is fine |
 | 4 | Chart library for Stage 3 | **Resolved: matplotlib** |

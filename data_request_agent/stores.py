@@ -1,4 +1,9 @@
-"""TabularStore seam: Postgres (business DB) now, BigQuery stub."""
+"""TabularStore seam: dummy Postgres (MVP) now; BigQuery post-MVP.
+
+`PostgresStore` is wired for `BUSINESS_DATABASE_URL`. `BigQueryStore` is the
+planned production adapter (stub — not wired). Planner, execution, guard, and
+delivery depend only on this interface.
+"""
 
 from __future__ import annotations
 
@@ -91,7 +96,7 @@ class PostgresStore(TabularStore):
 
 
 class BigQueryStore(TabularStore):
-    """Stub — not wired for the demo."""
+    """Post-MVP production warehouse — stub, not wired for the MVP demo."""
 
     def execute(
         self,

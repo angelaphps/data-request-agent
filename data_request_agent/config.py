@@ -11,7 +11,8 @@ class Settings(BaseSettings):
     # Governance DB (admins, catalog, approvals, audit, checkpoints)
     database_url: str = "postgresql://test:test@localhost:5432/data_request_agent"
 
-    # Business / tabular store (Render beam_neb0 or other warehouse)
+    # Business tabular store — MVP: dummy Postgres URL. Post-MVP: BigQuery
+    # via BigQueryStore (TabularStore seam); this URL stays for local/demo.
     business_database_url: str | None = None
     readonly_database_url: str | None = None
 

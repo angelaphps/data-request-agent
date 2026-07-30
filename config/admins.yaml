@@ -9,3 +9,6 @@ admins:
   - slack_user_id: U0B9N7SB1CH
     display_name: Angela
     role: approver
+  - slack_user_id: U0B911TC3NX
+    display_name: Andres
+    role: approver
