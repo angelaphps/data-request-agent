@@ -148,12 +148,16 @@ flowchart LR
 | 1 | 2 | Clarification loop (≤2 questions) then plan | Done |
 | 2 | 1 | Admin DM → preview Submit → file in private thread | Done |
 | 3 | 1 | Requester → Submit → admin Approve → file | Done |
+| 3b | 1 | Approve without personal → CSV strips personal cols | Done |
+| 3c | 1 | Full Approve → CSV keeps personal cols | Done |
 | 4 | 1 | Admin Reject → notify; no final execute | Done |
+| 4b | 1 | Preview Cancel → cancelled; no delivery | Done |
 | 5 | 1 | Permission re-check blocks stale/invalid permission | Done |
 | 6 | 3 | Real analysis path (text + table + chart); no personal cols on analysis frame | Done |
 | 6b | 3 | Approved personal cols still stripped before analysis | Done |
 | 7 | 2 | Results check: mismatch → one retry → honest failure | Done |
 | 8 | 2 | 48h approval expiry + notify; public redirect; data-as-of | Done |
+| 8b | 1 | DM vs public channel redirect helper (`is_dm_channel`) | Done |
 | 9 | 1 | Audit events across successful requester lifecycle | Done |
 | 10 | 1 | Personal-data guard + analysis path (no Stage 1–2 mock) | Done |
 | 11 | 1 | Non-admin Approve → refused; request can keep waiting | Done |

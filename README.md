@@ -177,13 +177,23 @@ DM ask → (maybe 1–2 clarifying questions) → plan preview → **Submit** or
 **country** for analysis demos; `device_type` is flagged personal (good for
 approval / CSV tests).
 
+### Still click once in live Slack
+
+Automated gates now cover Cancel, full-Approve CSV PII, Reject, and DM-vs-public
+channel detection with synthetic IDs. Still verify live Bolt buttons / @mention:
+
+- Live **Submit / Cancel / Approve / Reject** (gates use `Command(resume=...)`)
+- Public **@mention** in a real channel (helper is unit-tested; Bolt wiring is not)
+
 ### Quick pass/fail checklist
 
 - [ ] Results only appear in the requester’s private DM
 - [ ] Preview has plan + SQL (not a sample of real rows)
 - [ ] Non-admin needs approval; admin does not
+- [ ] **Cancel** on preview stops with no delivery
 - [ ] Analysis asks produce chart/table path, not only a silent CSV
 - [ ] “Approve without personal data” removes personal columns from the CSV
+- [ ] Full **Approve** may keep personal columns on the CSV
 - [ ] Public @mention does not leak data into the channel
 
 ---

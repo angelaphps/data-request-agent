@@ -13,6 +13,11 @@ PUBLIC_REDIRECT = (
 )
 
 
+def is_dm_channel(channel_id: str) -> bool:
+    """Slack DM channels start with ``D``; public/private channels do not."""
+    return (channel_id or "").startswith("D")
+
+
 def identify(state: AgentState, *, gov: Governance) -> AgentState:
     user_id = state.get("requester_slack_id") or ""
     is_admin = gov.is_admin(user_id)

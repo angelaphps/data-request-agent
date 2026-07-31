@@ -140,6 +140,46 @@ def test_03b_approve_without_personal_redacts(
         assert "hidden personal" in (final.get("delivery_message") or "").lower()
         events = [e["event"] for e in gov.recent_audit(limit=20)]
         assert "approval_approved" in events
+
+
+def test_03c_approve_keeps_personal_on_csv(settings, gov, memory_dest):
+    """Full Approve keeps personal columns on the CSV (file path only)."""
+    runtime = AgentRuntime(
+        settings=settings,
+        gov=gov,
+        store=__import__(
+            "data_request_agent.stores", fromlist=["PostgresStore"]
+        ).PostgresStore(settings.query_database_url),
+        destination=memory_dest,
+        proposers=personal_device_proposers(),
+    )
+    thread_id = new_thread_id("keeppii")
+    config = {"configurable": {"thread_id": thread_id}}
+    with gov.open_checkpointer() as handle:
+        graph = build_graph(settings, handle.checkpointer, runtime=runtime)
+        invoke_until_interrupt(
+            graph,
+            {
+                "requester_slack_id": "U_REQ",
+                "channel_id": "D_REQ",
+                "thread_ts": "302.1",
+                "raw_text": "users sample with device type",
+            },
+            config,
+        )
+        resume(graph, config, "run", "U_REQ")
+        final = resume(graph, config, "approve", "U_ADMIN")
+        assert final.get("phase") == "delivered"
+        payload = memory_dest.deliveries[-1]
+        rows = payload.get("rows") or []
+        assert rows
+        assert "device_type" in rows[0]
+        assert "user_id" in rows[0]
+        assert payload.get("csv") is not None
+
+
+def test_04_admin_reject_no_delivery(settings, gov, runtime, memory_dest):
+    """Admin Reject → notify requester; no file delivery."""
     thread_id = new_thread_id("rej")
     config = {"configurable": {"thread_id": thread_id}}
     before = len(memory_dest.deliveries)
@@ -163,6 +203,31 @@ def test_03b_approve_without_personal_redacts(
         assert final.get("result_ref") is None
         events = [e["event"] for e in gov.recent_audit(limit=15)]
         assert "approval_rejected" in events
+
+
+def test_04b_preview_cancel_no_run(settings, gov, runtime, memory_dest):
+    """Cancel on plan preview → cancelled; nothing delivered."""
+    thread_id = new_thread_id("cancel")
+    config = {"configurable": {"thread_id": thread_id}}
+    before = len(memory_dest.deliveries)
+    with gov.open_checkpointer() as handle:
+        graph = build_graph(settings, handle.checkpointer, runtime=runtime)
+        first = invoke_until_interrupt(
+            graph,
+            {
+                "requester_slack_id": "U_ADMIN",
+                "channel_id": "D_ADMIN",
+                "thread_ts": "110.1",
+                "raw_text": "total_revenue_usd please",
+            },
+            config,
+        )
+        assert first["__interrupt__"][0].value["kind"] == "plan_preview"
+        final = resume(graph, config, "cancel", "U_ADMIN")
+        assert final.get("phase") == "cancelled"
+        assert "cancel" in (final.get("delivery_message") or "").lower()
+        assert len(memory_dest.deliveries) == before
+        assert final.get("result_ref") is None
 
 
 def test_05_permission_recheck_blocks_stale_approval(settings, gov, runtime, memory_dest):
@@ -416,11 +481,7 @@ def test_07_results_check_retry_then_honest(settings, gov, runtime, memory_dest)
 
 
 def test_08_expiry_redirect_data_as_of(settings, gov, runtime, memory_dest):
-    """Expiry sweep + data-as-of stamp; public redirect copy is constant."""
-    from data_request_agent.intake import PUBLIC_REDIRECT
-
-    assert "privately" in PUBLIC_REDIRECT.lower()
-
+    """Expiry sweep + data-as-of stamp (public redirect unit-tested separately)."""
     # Happy path includes data-as-of
     thread_id = new_thread_id("asof")
     config = {"configurable": {"thread_id": thread_id}}

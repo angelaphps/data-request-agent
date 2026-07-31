@@ -17,7 +17,7 @@ from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
 from data_request_agent.config import Settings
-from data_request_agent.intake import PUBLIC_REDIRECT
+from data_request_agent.intake import PUBLIC_REDIRECT, is_dm_channel
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ class SlackApp:
             if event.get("bot_id") or event.get("subtype"):
                 return
             channel = event.get("channel") or ""
-            if not channel.startswith("D"):
+            if not is_dm_channel(channel):
                 say(PUBLIC_REDIRECT)
                 return
             user = event.get("user")
