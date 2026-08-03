@@ -15,8 +15,13 @@ from data_request_agent.stores import PostgresStore
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger("data_request_agent")
     settings = Settings()
     gov = Governance(settings.database_url)
+    logger.info(
+        "Starting data-request-agent (Stage 4 thread memory enabled; "
+        "follow-ups use governance.thread_context)"
+    )
     runtime = AgentRuntime(
         settings=settings,
         gov=gov,
@@ -26,7 +31,7 @@ def main() -> None:
     )
     with gov.open_checkpointer() as handle:
         graph = build_graph(settings, handle.checkpointer, runtime=runtime)
-        app = create_slack_app(settings=settings, graph=graph)
+        app = create_slack_app(settings=settings, graph=graph, gov=gov)
         app.start()
 
 

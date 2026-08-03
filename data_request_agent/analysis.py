@@ -10,6 +10,7 @@ from __future__ import annotations
 import io
 import logging
 import os
+from decimal import Decimal
 from typing import Any, Callable, Literal
 
 import pandas as pd
@@ -195,6 +196,7 @@ def heuristic_analysis_plan(
     lower = {n.lower(): n for n in names}
     y = None
     for cand in (
+        "avg_duration_minutes",
         "duration_minutes",
         "amount_usd",
         "total_revenue_usd",
@@ -262,7 +264,27 @@ def run_analysis(
     chart_df = None
     stats: dict[str, Any] = {"row_count": int(len(df)), "aggregation": agg}
 
-    if group_col and y_col and y_col in df.columns and group_col in df.columns:
+    # SQL already returned one row per category — chart labels as-is.
+    if (
+        group_col
+        and y_col
+        and group_col in df.columns
+        and y_col in df.columns
+        and int(df[group_col].nunique(dropna=False)) == len(df)
+        and len(df) <= max_table_rows
+    ):
+        ordered = df.sort_values(
+            y_col,
+            ascending=not plan.sort_descending,
+            key=lambda s: pd.to_numeric(s, errors="coerce"),
+        )
+        summary = ordered
+        chart_df = ordered[[group_col, y_col]].copy()
+        stats["groups"] = int(len(ordered))
+        stats["value_column"] = y_col
+        stats["top"] = _records_jsonable(ordered.head(5).to_dict(orient="records"))
+        stats["preaggregated"] = True
+    elif group_col and y_col and y_col in df.columns and group_col in df.columns:
         how = {"sum": "sum", "mean": "mean", "count": "count", "min": "min", "max": "max"}[
             agg
         ]
@@ -285,16 +307,17 @@ def run_analysis(
         chart_df = grouped
         stats["groups"] = int(len(grouped))
         stats["value_column"] = value_col
-        stats["top"] = grouped.head(5).to_dict(orient="records")
+        stats["top"] = _records_jsonable(grouped.head(5).to_dict(orient="records"))
     elif y_col and y_col in df.columns:
         series = pd.to_numeric(df[y_col], errors="coerce")
         stats["y_column"] = y_col
         stats["min"] = _jsonable(series.min())
         stats["max"] = _jsonable(series.max())
         stats["mean"] = _jsonable(series.mean())
-        summary = (
-            df[[c for c in df.columns if c in {group_col, y_col} or True]]
-            .head(max_table_rows)
+        summary = df.head(max_table_rows)
+        stats["note"] = (
+            "measure only — group/category column was hidden (personal-data guard), "
+            "so no bar/line chart was drawn"
         )
     else:
         summary = df.head(max_table_rows)
@@ -406,12 +429,18 @@ def _render_chart(
 def _jsonable(value: Any) -> Any:
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return None
+    if isinstance(value, Decimal):
+        return float(value)
     if hasattr(value, "item"):
         try:
             return value.item()
         except Exception:  # noqa: BLE001
             return str(value)
     return value
+
+
+def _records_jsonable(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [{k: _jsonable(v) for k, v in row.items()} for row in rows]
 
 
 def build_live_analysis_planner(*, settings) -> Callable[..., AnalysisPlan]:

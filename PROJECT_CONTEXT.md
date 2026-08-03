@@ -24,8 +24,9 @@ The guiding trade-off, stated once: a secure agent nobody wants to use is a fail
 - Clarifying questions instead of guessing; a plain-language plan preview before anything runs; honest, useful decline messages.
 - Release of flagged personal data on **CSV / file** delivery when — and only
   when — the recorded approval for that specific request covers it.
-  **Analysis engines and language models never receive personal columns**,
-  even if the same request’s CSV approval would have allowed them.
+  **Analysis** strips **row-level** personal extracts (high-cardinality);
+  low-cardinality personal *dimensions* (e.g. a few device types) may remain
+  so charts keep a group axis. Planning LMs stay description-only.
 - A complete audit trail tied to each request.
 
 **Out of scope (deferred, each behind a seam that exists in the MVP):**
@@ -51,12 +52,13 @@ One orchestrated flow with five subsystems, plus a small governance database the
   today’s runner, or a future conversational/PandasAI engine) may see the
   executor’s raw frame — only a **guarded** release. **CSV** may retain
   personal columns when the approval covers them (e.g. a contact list).
-  **Analysis** always receives a further PII-stripped frame: personal columns
-  never reach the analysis engine or any language model. Today’s analysis LM
-  still gets column descriptions only (no data rows) and writes steps that
-  run on our side on that PII-stripped frame; a future conversational engine
-  may use non-personal rows from that same frame, still never personal
-  columns. The reply lands in the requester's private thread.
+  **Analysis** strips row-level personal extracts (high-cardinality) before
+  the engine; low-cardinality personal *dimensions* may remain for charts.
+  Today’s analysis LM still gets column descriptions only (no data rows)
+  and writes steps that run on our side on that guarded frame; a future
+  conversational engine may use non-personal rows from that same frame,
+  still never high-cardinality personal extracts. The reply lands in the
+  requester's private thread.
 
 The **governance database** is the agent's own small database: who the administrators are, recorded approvals, sensitivity flags, the audit log, saved state for waiting requests, and the **semantic layer** — the central catalog of dataset, table, column, and measure meanings that Intake, the Planner, Approval, and Delivery all read from. It is authored as files in this repository and loaded into the running agent; the analysis tool receives a small per-request slice generated from it, never its own copy.
 
@@ -80,9 +82,9 @@ Three subsystems contain a language-model step (understanding the request, draft
 
 **Authorization is data, enforced by structure.** Identity comes from the verified Slack platform; role from a table; permissions from recorded approvals; and the inability to write or over-read from the database account itself. Nothing security-critical is an instruction to a language model — a model can be talked out of an instruction, not out of a missing grant.
 
-**The language model proposes; code disposes.** Only three steps are probabilistic, and each is fenced: the parsed request is validated against a strict shape, the drafted query must pass inspection and a trial run, and analysis planning/execution never sees personal columns (today’s LM also sees no data rows — descriptions only; a future conversational engine may see non-personal post-guard rows). Retries regenerate the proposal but re-face the same checks, so persistence cannot widen access.
+**The language model proposes; code disposes.** Only three steps are probabilistic, and each is fenced: the parsed request is validated against a strict shape, the drafted query must pass inspection and a trial run, and analysis planning/execution never sees **row-level** personal extracts (today’s LM also sees no data rows — descriptions only; a future conversational engine may see non-personal post-guard rows). Retries regenerate the proposal but re-face the same checks, so persistence cannot widen access.
 
-**Humans decide what only humans can.** The requester confirms that the plan matches their intent (before) and can judge the result against what was run (after). The administrator judges whether *this person* should receive *this data* on a **file** — reviewing the request and the data it touches, not machine-generated query text. The flags on the approval card make the sensitive-data question explicit. The guard then carries that decision for CSV (release what was approved, hide what was not) and **always** strips personal columns before any analysis / LLM path.
+**Humans decide what only humans can.** The requester confirms that the plan matches their intent (before) and can judge the result against what was run (after). The administrator judges whether *this person* should receive *this data* on a **file** — reviewing the request and the data it touches, not machine-generated query text. The flags on the approval card make the sensitive-data question explicit. The guard then carries that decision for CSV (release what was approved, hide what was not) and strips **row-level** personal extracts before analysis (low-cardinality dimensions may remain for charts).
 
 **The delivery audience always equals the authorized person.** Requests and results live in the requester's private thread; a bot mention in a public channel processes nothing there. Approval authorizes a person, so delivery reaches exactly that person.
 
@@ -90,7 +92,7 @@ Three subsystems contain a language-model step (understanding the request, draft
 
 **Analysis replies stay compact in Slack.** An analysis request returns, in the requester's private thread: a direct text answer, an inline markdown summary table (≤ `analysis_summary_max_rows`, default 20 — a preview, not a dump), and a chart PNG. Full row extracts remain the file-delivery path.
 
-**Analysis engine (MVP vs end goal).** Today’s analysis is intentionally basic (“dumb”): a schema-only LM proposes groupby/aggregation/chart choices; our restricted pandas runner + matplotlib produce a one-shot answer, table, and PNG on a **PII-stripped** frame (personal columns always removed before analysis, regardless of CSV approval). **End goal:** conversational analysis — follow-ups about that result in the same thread. **PandasAI is the deferred engine for that** (swap behind `analysis.py`), still **downstream of the PII strip** (execute → results check → guard → analysis frame with no personal columns → engine), still using the central upstream catalog — not a second buried semantic layer, and never fed raw executor output or personal columns. Delivery, approval, and Slack shaping stay put.
+**Analysis engine (MVP vs end goal).** Today’s analysis is intentionally basic (“dumb”): a schema-only LM proposes groupby/aggregation/chart choices; our restricted pandas runner + matplotlib produce a one-shot answer, table, and PNG on a **guarded** frame (row-level personal extracts stripped; low-cardinality dimensions may remain for charts). **End goal:** conversational analysis — follow-ups about that result in the same thread. **PandasAI is the deferred engine for that** (swap behind `analysis.py`), still **downstream of the guard** (execute → results check → guard → analysis frame → engine), still using the central upstream catalog — not a second buried semantic layer, and never fed raw executor output or high-cardinality personal extracts. Delivery, approval, and Slack shaping stay put.
 
 **Honesty over confidence.** The agent asks rather than guesses, previews rather than surprises, names an alternative when it declines, and flags a result that looks wrong rather than delivering it with a straight face. Trust in the answers is the product; the checks exist to protect it.
 

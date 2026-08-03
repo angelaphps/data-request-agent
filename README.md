@@ -30,8 +30,9 @@ approves them.
 5. **Run** — bot re-checks permission, executes against the business database,
    checks the result shape, then applies the personal-data guard.
 6. **Deliver** — CSV or analysis lands only in the requester’s private DM.
-   CSV may keep personal columns when approval covers them; analysis never
-   receives personal columns (even if that request’s CSV approval would).
+   CSV may keep personal columns when approval covers them; analysis strips
+   row-level personal extracts but may keep low-cardinality dimensions
+   (e.g. device type) so charts still have a group axis.
 
 Public-channel @mentions are ignored; the bot asks the person to DM it instead.
 
@@ -42,7 +43,7 @@ Public-channel @mentions are ignored; the bot asks the person to DM it instead.
 | Kind | When | What arrives in Slack |
 |------|------|------------------------|
 | **File** | Default for extract-style asks | CSV + the SQL that ran + a “data as of” timestamp. Personal columns only if explicitly approved (e.g. a contact list). |
-| **Analysis** | Ask mentions analyze / chart / trend / stats | Short answer, markdown table (≤20 rows), chart image — always on a **PII-stripped** frame (no personal columns to the analysis engine or LLM). |
+| **Analysis** | Ask mentions analyze / chart / trend / stats | Short answer, markdown table (≤20 rows), chart image — on a guarded frame (row-level personal extracts stripped; low-cardinality dimensions may remain for charts). |
 
 Analysis today is a one-shot summary (groupby / aggregate + bar or line chart),
 not a conversational analytics agent yet (Stages 4–5).
@@ -71,8 +72,8 @@ those **tables** — edit YAML, then re-seed.
 
 Language models draft the request scope, the SQL, and (for analysis) the chart
 plan. Deterministic checks always follow: SQL inspection, trial run,
-permission re-check, and the personal-data guard before delivery. **Nothing
-with personal / PII columns reaches an analysis engine or LLM** — including
+permission re-check, and the personal-data guard before delivery. **Row-level
+personal / PII extracts do not reach an analysis engine or LLM** — including
 the upcoming conversational / PandasAI path. Explicit admin approval remains
 the path for releasing personal columns in **CSV** exports.
 

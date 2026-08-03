@@ -62,6 +62,7 @@ class AgentState(TypedDict):
     result_rows: NotRequired[list[dict[str, Any]] | None]
     result_row_count: NotRequired[int | None]
     guarded_rows: NotRequired[list[dict[str, Any]] | None]
+    hidden_personal: NotRequired[list[str] | None]
     analysis_mock: NotRequired[bool]
     analysis_answer: NotRequired[str | None]
     analysis_table_markdown: NotRequired[str | None]

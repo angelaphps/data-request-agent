@@ -37,15 +37,15 @@ Implementation stages: [`PLAN.md`](PLAN.md). Product / setup: [`README.md`](READ
 - Results are delivered only to the requester's own private thread.
 - Approval cards: names, flags, and estimates only — never data rows.
   Planning / scope LMs: descriptions and estimates only — never data rows.
-  **No personal / PII columns in any language-model or analysis-engine
-  context** (today’s analysis LM is schema-only; a future conversational
-  engine may use non-personal post-guard rows, still never personal
-  columns). **CSV / file** delivery may include personal columns when the
-  recorded approval explicitly covers them (e.g. a contact list).
+  **No row-level personal / PII extracts in any language-model or
+  analysis-engine context** (high-cardinality personal columns are
+  stripped; low-cardinality personal *dimensions* such as a few device
+  types may stay for local charts). Today’s analysis LM is schema-only.
+  **CSV / file** delivery may include personal columns when the recorded
+  approval explicitly covers them (e.g. a contact list).
 - Delivery order is fixed: **execute → results check → personal-data
   guard → then** file | analysis | future conversational engine.
-  Nothing reaches an analysis engine except through the guard, and the
-  analysis branch always strips personal columns again before the engine.
+  Nothing reaches an analysis engine except through the guard.
 - Every query passes inspection and the permission re-check before it
   runs, including retries and requests resumed after a wait.
 - The query path is read-only, enforced by the database account

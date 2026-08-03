@@ -20,8 +20,9 @@ Product narrative and setup: [README.md](README.md). Architecture invariants:
   golden queries) → Submit/Cancel → approval (incl. **Approve without
   personal data**) → re-check → execute → results check → **guard** → deliver
 - File path (CSV) + **dumb** one-shot analysis (`analysis.py` + matplotlib)
-  on a **PII-stripped** analysis frame (personal columns never reach analysis
-  / LLM; CSV may keep them when approval covers them)
+  on a **guarded** analysis frame (row-level personal extracts stripped;
+  low-cardinality dimensions may remain for charts; CSV may keep personal
+  when approval covers them)
 - Scope LLM, trend/stats → `wants_analysis`, 48h approval expiry, public
   redirect, data-as-of stamp
 - Scenario gates green (including scenario **6**); Stage 1–2 analysis mock
@@ -41,17 +42,14 @@ feeds analysis (present or future) a raw frame.
 
 - **File / CSV:** personal columns allowed only when the recorded approval
   covers them (e.g. contact list).
-- **Analysis / LLM (incl. future PandasAI):** always strip personal columns
-  again — **no PII to the analytics engine**, even if CSV approval would have
-  released them.
+- **Analysis / LLM (incl. future PandasAI):** strip **row-level** personal
+  extracts (high-cardinality); low-cardinality personal *dimensions* may
+  remain for charts. Planning LMs stay description-only (no data rows).
 
 ### Not built / deferred
 
-- Conversational follow-ups (“why is Web higher?”) / lasting thread analysis
-  context — **stubs only:** `migrations/003_thread_context.sql` and
-  `followups.py` exist; not wired into delivery / Slack routing yet (Stage 4)
-- Smarter analysis beyond one-shot groupby/agg + bar/line; **PandasAI** behind
-  `analysis.py`
+- Smarter / conversational analysis engine (PandasAI behind `analysis.py` —
+  Stage 5). Stage 4 thread memory + follow-ups are wired.
 - Pre-select / rewrite to omit personal columns (today: execute then
   guard-strip)
 - Dedicated business read-only DB role (A3 still open in practice)
@@ -69,7 +67,7 @@ flowchart LR
   s0 --> s4 --> s5 --> s6 --> s7
 ```
 
-**Next coding focus:** Stage 4 → Stage 5 (smarter / conversational analysis).
+**Next coding focus:** Stage 5 (smarter / conversational analysis engine).
 Business warehouse remains dummy Postgres until the post-MVP BigQuery swap.
 See [README — Next stages](README.md#next-stages).
 
@@ -153,8 +151,8 @@ flowchart LR
 | 4 | 1 | Admin Reject → notify; no final execute | Done |
 | 4b | 1 | Preview Cancel → cancelled; no delivery | Done |
 | 5 | 1 | Permission re-check blocks stale/invalid permission | Done |
-| 6 | 3 | Real analysis path (text + table + chart); no personal cols on analysis frame | Done |
-| 6b | 3 | Approved personal cols still stripped before analysis | Done |
+| 6 | 3 | Real analysis path (text + table + chart); high-card personal stripped | Done |
+| 6b | 3 | Low-card personal dims kept for charts; high-card personal extracts stripped | Done |
 | 7 | 2 | Results check: mismatch → one retry → honest failure | Done |
 | 8 | 2 | 48h approval expiry + notify; public redirect; data-as-of | Done |
 | 8b | 1 | DM vs public channel redirect helper (`is_dm_channel`) | Done |
@@ -285,30 +283,19 @@ CSV remains the only path that may carry approved personal columns.
 
 ---
 
-# Stage 4 — Thread memory for analysis follow-ups — NEXT
+# Stage 4 — Thread memory for analysis follow-ups — DONE
 
 **Goal:** After a chart/table, “why is Web higher?” / “what about India?” stays
 in-thread without a full new request every time.
 
-1. **Build:** Persist last **analysis** context per DM thread (PII-stripped
-   frame / summary only — `governance.thread_context`; migration `003` already
-   authored; finish save on analysis deliver + load on follow-up).
-2. **Route:** In `slack_app.py`, when graph is idle and message looks like a
-   follow-up and context exists → answer path; clear new extracts still start
-   the full spine.
-3. **Answer:** From stored stats / summary table / prior answer first
-   (`followups.py` exists as a stub — wire it). `needs_new_request` → fall
-   through to full graph with a suggested ask.
-4. **Invariant:** Follow-up LM / engine never sees personal columns or
-   pre-guard raw executor rows; prefer aggregates + small summary already
-   released on the analysis path.
-5. **Files:** `governance.py`, `delivery.py`, `slack_app.py`, `followups.py`,
-   migration `003`.
-6. **Verify:** new scenario(s) — analysis deliver → follow-up reply without new
-   approval when envelope unchanged; fresh “top 10…” still starts full spine;
-   stored context has no personal columns.
-7. **Deps:** none new required for heuristic path; OpenAI for LM follow-ups.
-8. **From you:** none.
+1. **Build:** Persist last **analysis** context per DM thread (aggregates /
+   summary — `governance.thread_context`; migration `003`).
+2. **Route:** In `slack_app.py`, prefer follow-up when context exists; clear
+   new extracts still start the full spine.
+3. **Answer:** From stored stats / summary / prior answer (`followups.py`).
+4. **Invariant:** Follow-up LM never sees catalog personal schema fields or
+   high-cardinality personal extracts (already stripped before analysis).
+5. **Verify:** scenario 6 + follow-up; fresh “top 10…” refuses follow-up path.
 
 **Stage 4 done when:** follow-up scenario(s) pass and Stage 0–3 gates still pass.
 

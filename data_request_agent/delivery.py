@@ -5,9 +5,9 @@ table (≤ settings.analysis_summary_max_rows) + chart PNG. Full row
 dumps remain file delivery when analysis is not requested.
 
 Personal columns: CSV may keep them when the approval covers them (e.g. a
-contact list). Analysis engines and LMs never receive personal columns —
-they always run on a PII-stripped frame, including future conversational /
-PandasAI paths.
+contact list). Analysis strips **row-level** personal extracts (many distinct
+values). Low-cardinality personal *dimensions* (e.g. 3 device types) are kept
+so charts still have a group axis.
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ from data_request_agent.analysis import (
 )
 from data_request_agent.config import Settings
 from data_request_agent.destinations import Destination, rows_to_csv
+from data_request_agent.followups import build_thread_context_payload
 from data_request_agent.governance import Governance
 from data_request_agent.sql_inspect import load_catalog_objects
 from data_request_agent.state import AgentState
@@ -51,6 +52,27 @@ def _drop_personal_columns(
             new_row[key] = value
         out.append(new_row)
     return out, hidden
+
+
+def _personal_is_row_level_extract(
+    rows: list[dict[str, Any]],
+    personal_cols: set[str],
+    *,
+    max_distinct: int = 10,
+) -> bool:
+    """True when personal cols look like a contact-list extract (many values).
+
+    Low-cardinality dimensions (e.g. 3 device types) are kept for charts.
+    """
+    if not rows or not personal_cols:
+        return False
+    frame = pd.DataFrame(rows)
+    for col in frame.columns:
+        if col.lower() not in personal_cols:
+            continue
+        if int(frame[col].nunique(dropna=False)) > max_distinct:
+            return True
+    return False
 
 
 def guard_and_deliver(
@@ -102,12 +124,16 @@ def guard_and_deliver(
     )
 
     if wants_analysis:
-        # Analysis / LLM path: always strip personal columns, even if approved
-        # for CSV release on the same request.
-        analysis_rows, analysis_hidden = _drop_personal_columns(
-            file_guarded, personal_cols
-        )
-        analysis_hidden |= hidden
+        # Strip row-level personal extracts (many distinct values). Keep
+        # low-cardinality personal dimensions (e.g. 3 device types) for charts.
+        if _personal_is_row_level_extract(file_guarded, personal_cols):
+            analysis_rows, analysis_hidden = _drop_personal_columns(
+                file_guarded, personal_cols
+            )
+            analysis_hidden |= hidden
+        else:
+            analysis_rows = file_guarded
+            analysis_hidden = set(hidden)
         analysis_note = (
             f" (hidden personal columns: {sorted(analysis_hidden)})"
             if analysis_hidden
@@ -277,12 +303,56 @@ def _deliver_analysis(
         },
         actor_slack_id=state.get("requester_slack_id"),
     )
+    channel_id = state.get("channel_id") or ""
+    thread_ts = state.get("thread_ts") or ""
+    requester = state.get("requester_slack_id") or ""
+    if channel_id and thread_ts and requester:
+        try:
+            ctx = build_thread_context_payload(
+                original_ask=ask,
+                answer=result.answer,
+                table_markdown=result.table_markdown,
+                plain_language_plan=str(plan.get("plain_language_plan") or ""),
+                stats=result.stats,
+                schema_slice=schema,
+                data_as_of=read_at,
+            )
+            gov.save_thread_context(
+                channel_id=channel_id,
+                thread_ts=thread_ts,
+                requester_slack_id=requester,
+                context=ctx,
+            )
+            gov.audit(
+                "thread_context_saved",
+                {
+                    "thread_key": gov.thread_key(channel_id, thread_ts),
+                    "column_names": ctx.get("column_names"),
+                },
+                actor_slack_id=requester,
+            )
+        except Exception as exc:  # noqa: BLE001
+            import logging
+
+            logging.getLogger(__name__).exception(
+                "failed to save thread_context for follow-ups"
+            )
+            gov.audit(
+                "thread_context_save_failed",
+                {
+                    "error": str(exc),
+                    "channel_id": channel_id,
+                    "thread_ts": thread_ts,
+                },
+                actor_slack_id=requester,
+            )
     return {
         **state,
         "phase": "delivered",
         "result_ref": ref,
         "delivery_message": text,
         "guarded_rows": analysis_rows,
+        "hidden_personal": hidden_personal,
         "analysis_mock": False,
         "analysis_answer": result.answer,
         "analysis_table_markdown": result.table_markdown,

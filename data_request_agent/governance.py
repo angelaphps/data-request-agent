@@ -506,6 +506,64 @@ class Governance:
             )
             conn.commit()
 
+    def thread_key(self, channel_id: str, thread_ts: str) -> str:
+        return f"{channel_id}:{thread_ts}"
+
+    def save_thread_context(
+        self,
+        *,
+        channel_id: str,
+        thread_ts: str,
+        requester_slack_id: str,
+        context: dict[str, Any],
+    ) -> str:
+        """Upsert per-DM-thread analysis context (aggregates / summary only)."""
+        key = self.thread_key(channel_id, thread_ts)
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO governance.thread_context (
+                    thread_key, requester_slack_id, channel_id, thread_ts,
+                    context, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, NOW())
+                ON CONFLICT (thread_key) DO UPDATE SET
+                    requester_slack_id = EXCLUDED.requester_slack_id,
+                    context = EXCLUDED.context,
+                    updated_at = NOW()
+                """,
+                (
+                    key,
+                    requester_slack_id,
+                    channel_id,
+                    thread_ts,
+                    Jsonb(context),
+                ),
+            )
+            conn.commit()
+        return key
+
+    def get_thread_context(self, thread_key: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT thread_key, requester_slack_id, channel_id, thread_ts,
+                       context, updated_at
+                FROM governance.thread_context
+                WHERE thread_key = %s
+                """,
+                (thread_key,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def clear_thread_context(self, thread_key: str) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "DELETE FROM governance.thread_context WHERE thread_key = %s",
+                (thread_key,),
+            )
+            conn.commit()
+
     def checkpointer(self) -> Any:
         """Return LangGraph PostgresSaver — prefer :meth:`open_checkpointer`."""
         from langgraph.checkpoint.postgres import PostgresSaver

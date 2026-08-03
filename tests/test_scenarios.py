@@ -391,10 +391,183 @@ def test_06_analysis_path(settings, gov, memory_dest):
         if guarded:
             assert "device_type" not in guarded[0]
         assert "Data as of:" in (final.get("delivery_message") or "")
+        # Stage 4: thread context saved for follow-ups.
+        key = gov.thread_key("D_ADMIN", "606.1")
+        row = gov.get_thread_context(key)
+        assert row is not None
+        ctx = row["context"]
+        assert ctx.get("answer")
+        assert "device_type" not in (ctx.get("column_names") or [])
+        events = [e["event"] for e in gov.recent_audit(limit=20)]
+        assert "thread_context_saved" in events
+        from data_request_agent.followups import try_answer_followup
+
+        quiet = settings.model_copy(update={"openai_api_key": ""})
+        follow = try_answer_followup(
+            "why is that country higher?",
+            gov=gov,
+            settings=quiet,
+            channel_id="D_ADMIN",
+            thread_ts="606.1",
+            requester_slack_id="U_ADMIN",
+        )
+        assert follow is not None
+        assert follow.needs_new_request is False
+        assert follow.reply
+        assert (
+            try_answer_followup(
+                "top 10 users by session times",
+                gov=gov,
+                settings=quiet,
+                channel_id="D_ADMIN",
+                thread_ts="606.1",
+                requester_slack_id="U_ADMIN",
+            )
+            is None
+        )
 
 
-def test_06b_analysis_never_keeps_personal_even_if_approved(settings, gov, memory_dest):
-    """Approved personal columns stay on CSV path only — not analysis / LLM frame."""
+def test_06d_requester_analysis_after_approval(settings, gov, memory_dest):
+    """Non-admin analysis ask → approval → analysis delivery (not CSV)."""
+    from data_request_agent.analysis import heuristic_analysis_plan
+    from data_request_agent.proposers import DraftPlan, ParsedAsk, Proposers
+
+    def parse_ask(raw_text: str, *, metric_names: list[str]) -> ParsedAsk:
+        return ParsedAsk(
+            status="ok",
+            intent=raw_text,
+            metric_name="session_duration_by_country",
+            wants_analysis=True,
+        )
+
+    def draft_sql(parsed: ParsedAsk) -> DraftPlan:
+        return DraftPlan(
+            sql=(
+                "SELECT u.country, AVG(s.duration_minutes) AS avg_duration_minutes "
+                "FROM public.sessions s "
+                "JOIN public.users u ON s.user_id = u.user_id "
+                "GROUP BY u.country "
+                "ORDER BY avg_duration_minutes DESC"
+            ),
+            plain_language="Average session duration by country.",
+            definitions=["avg session duration by country"],
+            columns=["country", "avg_duration_minutes"],
+        )
+
+    runtime = AgentRuntime(
+        settings=settings,
+        gov=gov,
+        store=__import__(
+            "data_request_agent.stores", fromlist=["PostgresStore"]
+        ).PostgresStore(settings.query_database_url),
+        destination=memory_dest,
+        proposers=Proposers(parse_ask=parse_ask, draft_sql=draft_sql),
+        plan_analysis=heuristic_analysis_plan,
+    )
+    thread_id = new_thread_id("req-analysis")
+    config = {"configurable": {"thread_id": thread_id}}
+    with gov.open_checkpointer() as handle:
+        graph = build_graph(settings, handle.checkpointer, runtime=runtime)
+        invoke_until_interrupt(
+            graph,
+            {
+                "requester_slack_id": "U_REQ",
+                "channel_id": "D_REQ",
+                "thread_ts": "606.4",
+                "raw_text": "analyze average session duration by country",
+            },
+            config,
+        )
+        resume(graph, config, "run", "U_REQ")
+        final = resume(graph, config, "approve", "U_ADMIN")
+        assert final.get("phase") == "delivered"
+        assert final.get("analysis_mock") is False
+        assert final.get("analysis_answer")
+        payload = memory_dest.deliveries[-1]
+        assert payload.get("wants_analysis") is True
+        assert payload.get("csv") is None
+        key = gov.thread_key("D_REQ", "606.4")
+        assert gov.get_thread_context(key) is not None
+
+
+def test_06e_requester_analysis_approve_without_personal(
+    settings, gov, memory_dest
+):
+    """Approve without personal → analysis frame has no device_type."""
+    from data_request_agent.analysis import heuristic_analysis_plan
+    from data_request_agent.approval import APPROVE_WITHOUT_PERSONAL
+
+    runtime = AgentRuntime(
+        settings=settings,
+        gov=gov,
+        store=__import__(
+            "data_request_agent.stores", fromlist=["PostgresStore"]
+        ).PostgresStore(settings.query_database_url),
+        destination=memory_dest,
+        proposers=personal_device_proposers(),
+        plan_analysis=heuristic_analysis_plan,
+    )
+    thread_id = new_thread_id("req-analy-nopii")
+    config = {"configurable": {"thread_id": thread_id}}
+    with gov.open_checkpointer() as handle:
+        graph = build_graph(settings, handle.checkpointer, runtime=runtime)
+        invoke_until_interrupt(
+            graph,
+            {
+                "requester_slack_id": "U_REQ",
+                "channel_id": "D_REQ",
+                "thread_ts": "606.5",
+                "raw_text": "analyze users sample with device type",
+            },
+            config,
+        )
+        resume(graph, config, "run", "U_REQ")
+        final = resume(graph, config, APPROVE_WITHOUT_PERSONAL, "U_ADMIN")
+        assert final.get("phase") == "delivered"
+        guarded = final.get("guarded_rows") or []
+        assert guarded
+        assert "device_type" not in guarded[0]
+        assert "country" in guarded[0]
+        assert "hidden personal" in (final.get("delivery_message") or "").lower()
+        assert "device_type" in (final.get("delivery_message") or "").lower()
+
+
+def test_03d_admin_csv_keeps_approved_personal(settings, gov, memory_dest):
+    """Admin CSV path keeps personal columns when the plan envelope covers them."""
+    from data_request_agent.delivery import guard_and_deliver
+
+    state = guard_and_deliver(
+        {
+            "requester_slack_id": "U_ADMIN",
+            "channel_id": "D_ADMIN",
+            "thread_ts": "303.1",
+            "result_rows": [
+                {"user_id": 1, "country": "US", "device_type": "iOS"},
+            ],
+            "plan": {
+                "plain_language_plan": "users sample",
+                "wants_analysis": False,
+                "approved_columns": ["user_id", "country", "device_type"],
+            },
+            "approved": {
+                "status": "approved",
+                "plan": {
+                    "plain_language_plan": "users sample",
+                    "wants_analysis": False,
+                    "approved_columns": ["user_id", "country", "device_type"],
+                },
+            },
+        },
+        gov=gov,
+        destination=memory_dest,
+        settings=settings,
+    )
+    assert state.get("phase") == "delivered"
+    payload = memory_dest.deliveries[-1]
+    assert payload.get("csv") is not None
+    assert "device_type" in (payload.get("rows") or [{}])[0]
+
+    """Low-cardinality personal dims (e.g. 3 devices) stay so charts have an axis."""
     from data_request_agent.analysis import heuristic_analysis_plan
     from data_request_agent.delivery import guard_and_deliver
 
@@ -404,15 +577,63 @@ def test_06b_analysis_never_keeps_personal_even_if_approved(settings, gov, memor
             "channel_id": "D_ADMIN",
             "thread_ts": "606.2",
             "result_rows": [
-                {
-                    "user_id": 1,
-                    "country": "US",
-                    "device_type": "iOS",
-                    "avg_duration_minutes": 12.5,
-                }
+                {"device_type": "iOS", "avg_duration_minutes": 12.5},
+                {"device_type": "Android", "avg_duration_minutes": 10.0},
+                {"device_type": "Web", "avg_duration_minutes": 8.0},
             ],
             "plan": {
-                "plain_language_plan": "sample with personal device",
+                "plain_language_plan": "session duration by device",
+                "wants_analysis": True,
+                "approved_columns": ["device_type", "avg_duration_minutes"],
+                "trial_columns": ["device_type", "avg_duration_minutes"],
+            },
+            "approved": {
+                "status": "approved",
+                "plan": {
+                    "plain_language_plan": "session duration by device",
+                    "wants_analysis": True,
+                    "approved_columns": ["device_type", "avg_duration_minutes"],
+                },
+            },
+        },
+        gov=gov,
+        destination=memory_dest,
+        settings=settings,
+        plan_analysis=heuristic_analysis_plan,
+    )
+    assert state.get("phase") == "delivered"
+    guarded = state.get("guarded_rows") or []
+    assert guarded
+    assert "device_type" in guarded[0]
+    assert not state.get("hidden_personal")
+    payload = memory_dest.deliveries[-1]
+    assert payload.get("chart_png") or state.get("analysis_answer")
+
+
+def test_06c_analysis_strips_high_cardinality_personal_extract(
+    settings, gov, memory_dest
+):
+    """Many distinct personal values (contact-list style) are stripped before analysis."""
+    from data_request_agent.analysis import heuristic_analysis_plan
+    from data_request_agent.delivery import guard_and_deliver
+
+    rows = [
+        {
+            "user_id": i,
+            "device_type": f"device_{i}",
+            "country": "US",
+            "avg_duration_minutes": float(i),
+        }
+        for i in range(1, 15)
+    ]
+    state = guard_and_deliver(
+        {
+            "requester_slack_id": "U_ADMIN",
+            "channel_id": "D_ADMIN",
+            "thread_ts": "606.3",
+            "result_rows": rows,
+            "plan": {
+                "plain_language_plan": "sample with many devices",
                 "wants_analysis": True,
                 "approved_columns": [
                     "user_id",
@@ -430,7 +651,7 @@ def test_06b_analysis_never_keeps_personal_even_if_approved(settings, gov, memor
             "approved": {
                 "status": "approved",
                 "plan": {
-                    "plain_language_plan": "sample with personal device",
+                    "plain_language_plan": "sample with many devices",
                     "wants_analysis": True,
                     "approved_columns": [
                         "user_id",
@@ -451,7 +672,7 @@ def test_06b_analysis_never_keeps_personal_even_if_approved(settings, gov, memor
     assert guarded
     assert "device_type" not in guarded[0]
     assert "country" in guarded[0]
-    assert "device_type" in (state.get("delivery_message") or "").lower()
+    assert "device_type" in (state.get("hidden_personal") or [])
 
 
 def test_07_results_check_retry_then_honest(settings, gov, runtime, memory_dest):

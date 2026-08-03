@@ -135,3 +135,85 @@ def _heuristic_followup(question: str, context: dict[str, Any]) -> FollowupAnswe
         needs_new_request=True,
         suggested_ask=question,
     )
+
+
+def try_answer_followup(
+    text: str,
+    *,
+    gov: Any,
+    settings: Any,
+    channel_id: str,
+    thread_ts: str,
+    requester_slack_id: str,
+) -> FollowupAnswer | None:
+    """If this DM looks like a follow-up and context exists, answer it.
+
+    Returns ``None`` when the message should start (or continue) the full
+    request graph instead.
+    """
+    key = gov.thread_key(channel_id, thread_ts)
+    row = gov.get_thread_context(key)
+    if not row:
+        return None
+    if row.get("requester_slack_id") and row["requester_slack_id"] != requester_slack_id:
+        return None
+    context = row.get("context") or {}
+    if not looks_like_followup(text, has_context=True):
+        return None
+    return answer_followup(text, context, settings=settings)
+
+
+def build_thread_context_payload(
+    *,
+    original_ask: str,
+    answer: str,
+    table_markdown: str,
+    plain_language_plan: str,
+    stats: dict[str, Any],
+    schema_slice: list[dict[str, Any]],
+    data_as_of: str,
+) -> dict[str, Any]:
+    """Context for follow-ups — aggregates/summary only, no personal schema cols.
+
+    High-cardinality personal extracts are already stripped from the analysis
+    frame before this runs. Catalog ``personal`` columns are omitted from the
+    stored schema list so follow-up LMs do not treat them as queryable fields.
+    """
+    safe_schema = [
+        {
+            "name": c.get("name"),
+            "description": c.get("description"),
+            "dtype": c.get("dtype"),
+            "dataset": c.get("dataset"),
+        }
+        for c in schema_slice
+        if (c.get("sensitivity") or "none") != "personal"
+    ]
+    return {
+        "original_ask": original_ask,
+        "answer": answer,
+        "table_markdown": table_markdown,
+        "plain_language_plan": plain_language_plan,
+        "stats": _json_safe(stats),
+        "schema_slice": safe_schema,
+        "column_names": [c.get("name") for c in safe_schema if c.get("name")],
+        "data_as_of": data_as_of,
+    }
+
+
+def _json_safe(value: Any) -> Any:
+    """Make analysis stats JSON-serializable (numpy / pandas scalars)."""
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    if hasattr(value, "item"):
+        try:
+            return value.item()
+        except Exception:  # noqa: BLE001
+            return str(value)
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
