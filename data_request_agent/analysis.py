@@ -172,16 +172,24 @@ def make_llm_analysis_planner(
         *,
         frame_for_leak_check: pd.DataFrame | None = None,
     ) -> AnalysisPlan:
-        from pydantic_ai import Agent
+        try:
+            from pydantic_ai import Agent
 
-        prompt = build_analysis_prompt(ask=ask, schema_slice=schema_slice)
-        if frame_for_leak_check is not None:
-            assert_prompt_has_no_data_rows(
-                prompt, frame_for_leak_check, schema_slice=schema_slice
+            prompt = build_analysis_prompt(ask=ask, schema_slice=schema_slice)
+            if frame_for_leak_check is not None:
+                assert_prompt_has_no_data_rows(
+                    prompt, frame_for_leak_check, schema_slice=schema_slice
+                )
+            agent = Agent(
+                model, output_type=AnalysisPlan, system_prompt=ANALYSIS_SYSTEM
             )
-        agent = Agent(model, output_type=AnalysisPlan, system_prompt=ANALYSIS_SYSTEM)
-        result = agent.run_sync(prompt)
-        return result.output
+            result = agent.run_sync(prompt)
+            return result.output
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "LLM analysis planner failed; using heuristic_analysis_plan"
+            )
+            return heuristic_analysis_plan(ask, schema_slice)
 
     return plan_analysis
 

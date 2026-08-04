@@ -19,7 +19,11 @@ from slack_bolt.adapter.socket_mode import SocketModeHandler
 from data_request_agent.config import Settings
 from data_request_agent.followups import try_answer_followup
 from data_request_agent.governance import Governance
-from data_request_agent.intake import PUBLIC_REDIRECT, is_dm_channel
+from data_request_agent.intake import (
+    PUBLIC_REDIRECT,
+    is_dm_channel,
+    normalize_slack_text,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +33,18 @@ ACTION_CANCEL = "plan_cancel"
 ACTION_APPROVE = "admin_approve"
 ACTION_APPROVE_NO_PERSONAL = "admin_approve_no_personal"
 ACTION_REJECT = "admin_reject"
+
+
+def _snapshot_task_error(snapshot: Any) -> str | None:
+    for task in getattr(snapshot, "tasks", ()) or ():
+        err = getattr(task, "error", None)
+        if err:
+            return str(err)
+    return None
+
+
+def _snapshot_has_task_error(snapshot: Any) -> bool:
+    return _snapshot_task_error(snapshot) is not None
 
 
 class SlackApp:
@@ -63,51 +79,86 @@ class SlackApp:
             user = event.get("user")
             if not user:
                 return
-            text = event.get("text") or ""
+            text = normalize_slack_text(event.get("text") or "")
             thread_ts = event.get("thread_ts") or event.get("ts")
             graph_thread_id = f"{channel}:{thread_ts}"
             config = {"configurable": {"thread_id": graph_thread_id}}
 
-            snapshot = self.graph.get_state(config)
-            # Prefer thread follow-up over resuming a clarify interrupt when we
-            # already have analysis context for this DM thread.
-            followup = try_answer_followup(
-                text,
-                gov=self.gov,
-                settings=self.settings,
-                channel_id=channel,
-                thread_ts=thread_ts,
-                requester_slack_id=user,
-            )
-            if followup is not None and not followup.needs_new_request:
-                say(text=followup.reply, thread_ts=thread_ts)
-                self.gov.audit(
-                    "followup_answered",
-                    {"thread_key": graph_thread_id},
-                    actor_slack_id=user,
+            try:
+                snapshot = self.graph.get_state(config)
+                # Prefer thread follow-up over resuming a clarify interrupt when we
+                # already have analysis context for this DM thread.
+                followup = try_answer_followup(
+                    text,
+                    gov=self.gov,
+                    settings=self.settings,
+                    channel_id=channel,
+                    thread_ts=thread_ts,
+                    requester_slack_id=user,
+                )
+                if followup is not None and not followup.needs_new_request:
+                    say(text=followup.reply, thread_ts=thread_ts)
+                    self.gov.audit(
+                        "followup_answered",
+                        {"thread_key": graph_thread_id},
+                        actor_slack_id=user,
+                    )
+                    return
+
+                if snapshot.next:
+                    # Failed node (not a human interrupt): retry instead of resume.
+                    if _snapshot_has_task_error(snapshot):
+                        logger.warning(
+                            "retrying failed graph task for %s: %s",
+                            graph_thread_id,
+                            _snapshot_task_error(snapshot),
+                        )
+                        result = self.graph.invoke(None, config)
+                    else:
+                        result = self.graph.invoke(
+                            Command(resume={"text": text, "actor_slack_id": user}),
+                            config,
+                        )
+                else:
+                    raw_text = text
+                    if followup is not None and followup.needs_new_request:
+                        if followup.reply:
+                            say(text=followup.reply, thread_ts=thread_ts)
+                        raw_text = followup.suggested_ask or text
+                    result = self.graph.invoke(
+                        {
+                            "requester_slack_id": user,
+                            "channel_id": channel,
+                            "thread_ts": thread_ts,
+                            "raw_text": raw_text,
+                        },
+                        config,
+                    )
+            except Exception as exc:  # noqa: BLE001 — always tell the requester
+                logger.exception("graph invoke failed for %s", graph_thread_id)
+                try:
+                    self.gov.audit(
+                        "request_failed",
+                        {
+                            "error": str(exc),
+                            "error_type": type(exc).__name__,
+                            "thread_key": graph_thread_id,
+                            "raw_text": text,
+                        },
+                        actor_slack_id=user,
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception("failed to audit request_failed")
+                say(
+                    text=(
+                        "Something went wrong while handling that request "
+                        f"({type(exc).__name__}: {exc}). "
+                        "Please try again in a new message."
+                    ),
+                    thread_ts=thread_ts,
                 )
                 return
 
-            if snapshot.next:
-                result = self.graph.invoke(
-                    Command(resume={"text": text, "actor_slack_id": user}),
-                    config,
-                )
-            else:
-                raw_text = text
-                if followup is not None and followup.needs_new_request:
-                    if followup.reply:
-                        say(text=followup.reply, thread_ts=thread_ts)
-                    raw_text = followup.suggested_ask or text
-                result = self.graph.invoke(
-                    {
-                        "requester_slack_id": user,
-                        "channel_id": channel,
-                        "thread_ts": thread_ts,
-                        "raw_text": raw_text,
-                    },
-                    config,
-                )
             self._handle_result(
                 result,
                 say=say,

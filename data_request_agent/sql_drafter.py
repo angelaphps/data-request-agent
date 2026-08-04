@@ -58,28 +58,30 @@ def make_llm_sql_drafter(
     """Return a SqlDrafter that uses pydantic-ai; falls back to templates if needed."""
 
     def draft_sql(parsed: ParsedAsk, *, feedback: str | None = None) -> DraftPlan:
-        from pydantic_ai import Agent
-
-        agent = Agent(model, output_type=DraftPlan, system_prompt=SQL_SYSTEM)
-        catalog = catalog_text_provider()
         ask = parsed.intent or ""
-        extra = ""
-        if parsed.metric_name:
-            extra += f"\nSuggested metric (optional hint): {parsed.metric_name}"
-        if parsed.country_filter:
-            extra += f"\nCountry filter hint: {parsed.country_filter}"
-        if parsed.wants_analysis:
-            extra += "\nUser also wants analysis later; still return the data query."
-        if feedback:
-            extra += f"\nPrevious draft failed checks — fix this:\n{feedback}"
-
-        prompt = (
-            f"Catalog (descriptions only — no data rows):\n{catalog}\n\n"
-            f"User request:\n{ask}\n"
-            f"{extra}\n\n"
-            "Draft one safe read-only SQL query that answers the request."
-        )
         try:
+            from pydantic_ai import Agent
+
+            agent = Agent(model, output_type=DraftPlan, system_prompt=SQL_SYSTEM)
+            catalog = catalog_text_provider()
+            extra = ""
+            if parsed.metric_name:
+                extra += f"\nSuggested metric (optional hint): {parsed.metric_name}"
+            if parsed.country_filter:
+                extra += f"\nCountry filter hint: {parsed.country_filter}"
+            if parsed.wants_analysis:
+                extra += (
+                    "\nUser also wants analysis later; still return the data query."
+                )
+            if feedback:
+                extra += f"\nPrevious draft failed checks — fix this:\n{feedback}"
+
+            prompt = (
+                f"Catalog (descriptions only — no data rows):\n{catalog}\n\n"
+                f"User request:\n{ask}\n"
+                f"{extra}\n\n"
+                "Draft one safe read-only SQL query that answers the request."
+            )
             result = agent.run_sync(prompt)
             draft: DraftPlan = result.output
             draft.sql = _strip_fences(draft.sql)

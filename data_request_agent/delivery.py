@@ -231,40 +231,64 @@ def _deliver_analysis(
     except TypeError:
         analysis_plan = planner(ask, schema)
     except Exception as exc:  # noqa: BLE001
+        import logging
+
+        logging.getLogger(__name__).exception(
+            "analysis planner failed; falling back to heuristic plan"
+        )
         gov.audit(
             "analysis_plan_failed",
-            {"error": str(exc)},
+            {
+                "error": str(exc),
+                "error_type": type(exc).__name__,
+                "fallback": "heuristic_analysis_plan",
+            },
             actor_slack_id=state.get("requester_slack_id"),
         )
-        # Fall back to file (approval-scoped CSV may still include personal cols).
-        csv_text = rows_to_csv(file_fallback_rows)
-        text = (
-            f"I couldn't complete the analysis ({exc}). "
-            f"Here's the data as a file instead.\n"
-            f"Ran: {plan.get('plain_language_plan')}\n"
-            f"Rows: {len(file_fallback_rows)}{file_hidden_note}\n"
-            f"Data as of: {read_at}"
-        )
-        ref = destination.deliver(
-            {
-                "channel_id": state.get("channel_id"),
-                "thread_ts": state.get("thread_ts"),
-                "text": text,
-                "csv": csv_text,
-                "filename": "data_request.csv",
-                "rows": file_fallback_rows,
+        # Prefer a local heuristic plan (still analysis) over dumping CSV.
+        try:
+            from data_request_agent.analysis import heuristic_analysis_plan
+
+            analysis_plan = heuristic_analysis_plan(ask, schema)
+        except Exception as heur_exc:  # noqa: BLE001
+            gov.audit(
+                "analysis_plan_failed",
+                {
+                    "error": str(heur_exc),
+                    "error_type": type(heur_exc).__name__,
+                    "fallback": "csv",
+                    "prior_error": str(exc),
+                },
+                actor_slack_id=state.get("requester_slack_id"),
+            )
+            csv_text = rows_to_csv(file_fallback_rows)
+            text = (
+                f"I couldn't complete the analysis ({exc}). "
+                f"Here's the data as a file instead.\n"
+                f"Ran: {plan.get('plain_language_plan')}\n"
+                f"Rows: {len(file_fallback_rows)}{file_hidden_note}\n"
+                f"Data as of: {read_at}"
+            )
+            ref = destination.deliver(
+                {
+                    "channel_id": state.get("channel_id"),
+                    "thread_ts": state.get("thread_ts"),
+                    "text": text,
+                    "csv": csv_text,
+                    "filename": "data_request.csv",
+                    "rows": file_fallback_rows,
+                    "analysis_mock": False,
+                }
+            )
+            return {
+                **state,
+                "phase": "delivered",
+                "result_ref": ref,
+                "delivery_message": text,
+                "guarded_rows": file_fallback_rows,
                 "analysis_mock": False,
+                "error": "analysis_plan_failed",
             }
-        )
-        return {
-            **state,
-            "phase": "delivered",
-            "result_ref": ref,
-            "delivery_message": text,
-            "guarded_rows": file_fallback_rows,
-            "analysis_mock": False,
-            "error": "analysis_plan_failed",
-        }
 
     result = run_analysis(
         frame,

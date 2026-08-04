@@ -14,6 +14,13 @@ def test_looks_like_followup_vs_fresh_extract():
     assert not looks_like_followup(
         "top 10 users by session times", has_context=True
     )
+    assert not looks_like_followup(
+        "session duration trend by device", has_context=True
+    )
+    assert not looks_like_followup(
+        "list of users with country and device most recent 20",
+        has_context=True,
+    )
     assert not looks_like_followup("why is Web higher?", has_context=False)
 
 

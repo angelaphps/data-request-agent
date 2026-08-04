@@ -18,14 +18,25 @@ def is_dm_channel(channel_id: str) -> bool:
     return (channel_id or "").startswith("D")
 
 
+def normalize_slack_text(text: str) -> str:
+    """Strip common Slack mrkdwn wrappers (italic/bold) from pasted asks."""
+    raw = (text or "").strip()
+    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "_*":
+        inner = raw[1:-1].strip()
+        if inner:
+            return inner
+    return raw
+
+
 def identify(state: AgentState, *, gov: Governance) -> AgentState:
     user_id = state.get("requester_slack_id") or ""
     is_admin = gov.is_admin(user_id)
+    raw_text = normalize_slack_text(state.get("raw_text") or "")
     if not state.get("clarify_count"):
         gov.audit(
             "request_received",
             {
-                "raw_text": state.get("raw_text"),
+                "raw_text": raw_text,
                 "channel_id": state.get("channel_id"),
                 "thread_ts": state.get("thread_ts"),
                 "is_admin": is_admin,
@@ -34,6 +45,7 @@ def identify(state: AgentState, *, gov: Governance) -> AgentState:
         )
     return {
         **state,
+        "raw_text": raw_text,
         "is_admin": is_admin,
         "phase": "identified",
         "clarify_count": int(state.get("clarify_count") or 0),

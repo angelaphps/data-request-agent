@@ -30,7 +30,9 @@ _FRESH_ASK_RE = re.compile(
     r"\b("
     r"top\s+\d+|list of|give me|export|csv|download|"
     r"how many|how much|total revenue|active subscriptions|"
-    r"users from|revenue by|session times"
+    r"users from|revenue by|session times|"
+    r"session duration|trend by|by device|most recent|"
+    r"analyze|analyse|chart|stats"
     r")\b",
     re.IGNORECASE,
 )
