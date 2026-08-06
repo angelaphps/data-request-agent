@@ -35,7 +35,7 @@ def plan_query(
     parsed = ParsedAsk.model_validate(request.get("parsed") or {})
     if not parsed.intent:
         parsed.intent = request.get("raw_text") or state.get("raw_text") or ""
-    catalog = load_catalog_objects(gov)
+    catalog = load_catalog_objects()
     last_notes: list[str] = []
     feedback: str | None = None
 

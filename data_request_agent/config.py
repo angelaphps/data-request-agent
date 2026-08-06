@@ -8,7 +8,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    # Governance DB (admins, catalog, approvals, audit, checkpoints)
+    # Governance DB (admins, approvals, audit, checkpoints).
+    # Semantic meanings: semantic_layer/ YAML — not this database.
     database_url: str = "postgresql://test:test@localhost:5432/data_request_agent"
 
     # Business tabular store — MVP: dummy Postgres URL. Post-MVP: BigQuery

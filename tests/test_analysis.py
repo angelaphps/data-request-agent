@@ -10,21 +10,19 @@ from data_request_agent.analysis import (
     build_analysis_prompt,
     heuristic_analysis_plan,
     run_analysis,
-    schema_slice_from_governance,
+    schema_slice_from_catalog,
 )
 from data_request_agent.config import Settings
-from data_request_agent.governance import Governance
 
 
-def test_analysis_context_has_no_data_rows(settings: Settings, gov: Governance):
+def test_analysis_context_has_no_data_rows(settings: Settings):
     frame = pd.DataFrame(
         {
             "device_type": ["Web", "iOS", "SECRET_TOKEN_XYZ"],
             "avg_duration_minutes": [10.5, 12.0, 99.0],
         }
     )
-    schema = schema_slice_from_governance(
-        gov,
+    schema = schema_slice_from_catalog(
         column_names=list(frame.columns),
         dtypes={c: str(frame[c].dtype) for c in frame.columns},
     )

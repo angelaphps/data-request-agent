@@ -12,7 +12,7 @@ import re
 from typing import Callable
 
 from data_request_agent.proposers import DraftPlan, ParsedAsk, catalog_sql_drafter
-from data_request_agent.scope_parser import catalog_text_from_governance
+from data_request_agent.scope_parser import catalog_text_from_yaml
 
 logger = logging.getLogger(__name__)
 
@@ -104,5 +104,5 @@ def build_live_sql_drafter(*, settings, gov) -> Callable[..., DraftPlan]:
         return catalog_sql_drafter
     os.environ.setdefault("OPENAI_API_KEY", settings.openai_api_key)
     return make_llm_sql_drafter(
-        catalog_text_provider=lambda: catalog_text_from_governance(gov),
+        catalog_text_provider=lambda: catalog_text_from_yaml(settings.semantic_layer_dir),
     )

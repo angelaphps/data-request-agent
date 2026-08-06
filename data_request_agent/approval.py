@@ -16,17 +16,11 @@ from data_request_agent.state import AgentState
 APPROVE_WITHOUT_PERSONAL = "approve_without_personal"
 
 
-def personal_column_names(gov: Governance) -> set[str]:
-    """Lowercased column names marked sensitivity=personal in the catalog."""
-    with gov.connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT DISTINCT lower(name) AS name
-            FROM governance.columns
-            WHERE sensitivity = 'personal'
-            """
-        ).fetchall()
-    return {r["name"] for r in rows}
+def personal_column_names(gov: Governance | None = None) -> set[str]:
+    """Lowercased column names marked sensitivity=personal in YAML catalog."""
+    from data_request_agent.catalog import get_semantic_catalog
+
+    return get_semantic_catalog().personal_column_names()
 
 
 def plan_without_personal(plan: dict[str, Any], *, gov: Governance) -> dict[str, Any]:

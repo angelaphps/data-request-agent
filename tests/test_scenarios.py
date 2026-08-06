@@ -42,7 +42,8 @@ def test_01_clarification_loop_then_plan(settings, gov, runtime, memory_dest):
         assert second["__interrupt__"][0].value["kind"] == "plan_preview"
         final = resume(graph, config, "run", "U_ADMIN")
         assert final.get("phase") == "delivered"
-        events = [e["event"] for e in gov.recent_audit(limit=20)]
+        # Shared audit_log accumulates across the suite; use a wide window.
+        events = [e["event"] for e in gov.recent_audit(limit=200)]
         assert "clarify_asked" in events
         assert "clarify_answered" in events
 

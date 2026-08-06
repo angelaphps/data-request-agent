@@ -1,4 +1,6 @@
--- Catalog relationships + golden queries for LLM join grounding.
+-- Legacy catalog relationship / golden-query tables (UNUSED at runtime).
+-- Join keys and golden examples are read from semantic_layer/ YAML instead.
+-- Kept so older DBs that applied this migration stay compatible; do not seed.
 -- Apply: psql "$DATABASE_URL" -f migrations/002_catalog_relations.sql
 
 BEGIN;

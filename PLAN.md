@@ -11,11 +11,13 @@ Product narrative and setup: [README.md](README.md). Architecture invariants:
 
 ## Status — built vs not built
 
-### Built (Stages 0–3 + hardening)
+### Built (Stages 0–4 + hardening)
 
-- Governance DB (`DATABASE_URL`), migrations `001`/`002`, seed, dual DB
-  (business via `BUSINESS_DATABASE_URL`), LangGraph `PostgresSaver`, Slack
-  Socket Mode
+- Governance DB (`DATABASE_URL`), migrations `001`/`002`/`003`, admin seed,
+  dual DB (business via `BUSINESS_DATABASE_URL`), LangGraph `PostgresSaver`,
+  Slack Socket Mode
+- **Semantic catalog:** `semantic_layer/` YAML only at runtime (no DB catalog
+  copy). Legacy governance catalog tables may exist unused.
 - Full spine: intake → plan (LLM SQL + rich catalog **JOIN KEYS** /
   golden queries) → Submit/Cancel → approval (incl. **Approve without
   personal data**) → re-check → execute → results check → **guard** → deliver
@@ -23,6 +25,8 @@ Product narrative and setup: [README.md](README.md). Architecture invariants:
   on a **guarded** analysis frame (row-level personal extracts stripped;
   low-cardinality dimensions may remain for charts; CSV may keep personal
   when approval covers them)
+- Stage 4 thread memory / same-thread analysis follow-ups
+  (`governance.thread_context`, `followups.py`)
 - Scope LLM, trend/stats → `wants_analysis`, 48h approval expiry, public
   redirect, data-as-of stamp
 - Scenario gates green (including scenario **6**); Stage 1–2 analysis mock
@@ -59,17 +63,89 @@ feeds analysis (present or future) a raw frame.
 
 ```mermaid
 flowchart LR
-  s0[Stage0_3_DONE]
-  s4[Stage4_thread_memory]
+  s0[Stage0_4_DONE_demo]
+  r0[R0_real_warehouse_and_YAML]
   s5[Stage5_smarter_engine]
   s6[Stage6_pii_and_ops]
   s7[Later_BigQuery_store]
-  s0 --> s4 --> s5 --> s6 --> s7
+  s0 --> r0 --> s5 --> s6 --> s7
 ```
 
-**Next coding focus:** Stage 5 (smarter / conversational analysis engine).
-Business warehouse remains dummy Postgres until the post-MVP BigQuery swap.
-See [README — Next stages](README.md#next-stages).
+**Next coding focus (this demo repo → real-data repo):** see
+[Handoff — next repo](#handoff--next-repo-real-data) below. Product stages after
+Stage 4: **R0** (real data + semantic YAML) → Stage 5 → 6 → BigQuery. Semantic
+layer stays YAML-only until cross-datastore needs appear.
+
+---
+
+## Handoff — next repo (real data)
+
+Use this when cloning/moving the spine into a **new repository** pointed at a
+real warehouse (not the dummy Postgres). Stages **0–4 are done** here; do not
+re-build the Slack/approval/guard spine unless something is broken.
+
+### Carry forward unchanged
+
+- Delivery order: `execute → results check → guard → file | analysis | engine`
+- Identity from Slack; role from `governance.admins` only
+- `semantic_layer/` YAML as the **only** meanings catalog at runtime
+- No data rows in planning LMs; analysis never gets high-cardinality personal extracts
+- `TabularStore` / `Destination` seams — no parallel query or delivery paths
+- Seed = **admins only** (`scripts/seed.py`); never reintroduce catalog seeding
+
+### Semantic layer — next steps
+
+Keep **one** location: `semantic_layer/` YAML. Do not copy meanings into
+governance tables.
+
+**For the real warehouse (do first):**
+
+1. Replace demo dataset YAML under `semantic_layer/datasets/` with real
+   tables/views: correct `table_schema` / `table_name`, column names,
+   descriptions, and `sensitivity` (`none` | `internal` | `personal` |
+   `restricted`).
+2. Rewrite metrics (expressions must be valid against the real dialect —
+   Postgres today; BigQuery when that store is wired).
+3. Author **JOIN KEYS** and **golden query** examples for the joins people
+   actually ask about (these ground the SQL LLM).
+4. Mark personal / high-cardinality identifiers carefully — approval cards and
+   the analysis guard depend on these flags.
+5. Restart the bot after YAML edits (mtime cache); no catalog seed.
+6. Drop or ignore unused legacy `governance.datasets` / `columns` / `metrics`
+   tables in a clean governance DB if you prefer (optional cleanup).
+
+**Later (only if needed):**
+
+- Cross-datastore / multi-warehouse analysis → then consider a DB-backed
+  catalog or generated views; still **one** authored source of truth, not a
+  second buried layer inside an analysis engine.
+- Catalog admin UI / standing grants — out of scope until ops demand it.
+
+### After Stage 4 — recommended order (real repo)
+
+| Order | Work | Why |
+|-------|------|-----|
+| **R0** | Point `BUSINESS_DATABASE_URL` (or BigQuery) at real data; rewrite `semantic_layer/`; update golden SQL; green smoke + a few scenario asks | Ship value on real tables before engine work |
+| **R1 / Stage 5.1** | Richer allowlisted analysis runner (more aggs/charts/narratives) | Cheap wins on the guarded frame |
+| **R2 / Stage 5.2** | Conversational engine (PandasAI or equiv.) behind `analysis.py` | Only after proving no personal extracts in engine prompts |
+| **R3 / Stage 6** | Project/omit personal columns before execute; `READONLY_DATABASE_URL` (or BQ least-privilege) | Close A3; safer than execute-then-strip alone |
+| **R4 / Later** | `BigQueryStore` if production warehouse is BQ | Same spine; dialect + catalog naming only |
+
+Detail for Stages 5–6 and BigQuery is in the sections below. Treat **R0** as
+the first milestone of the new repo.
+
+### New-repo checklist
+
+| Item | Notes |
+|------|--------|
+| Copy spine | App code, migrations `001`–`003`, `AGENTS.md` / `PROJECT_CONTEXT.md` / this plan |
+| Secrets | Fresh `.env` — never copy production secrets into git |
+| Governance DB | New empty Postgres; apply migrations; seed **admins** only |
+| Business store | Real warehouse URL or BQ; retire dummy Render DB |
+| Semantic YAML | Real datasets/metrics/joins/goldens; delete demo-only files |
+| Slack | Same or new app; put real `U…` IDs in `config/admins.yaml` and seed |
+| Tests | Keep gates; swap fixtures/proposers as schemas change; run `pytest -q` |
+| Docs | Update README examples to real asks; leave Stage 0–4 as done |
 
 ---
 
@@ -136,8 +212,9 @@ flowchart LR
 | **A4** | Scenario tests use synthetic identities (`U_ADMIN` / `U_REQ`) and `Command(resume=...)`; no live Slack for gates. |
 | **A5** | Tests inject fixed proposers; inspection, trial, approval, re-check, guard, delivery always run for real. |
 | **A6** | Stage 3 analysis path is live (text + table + chart); scenario 6 is a gate. |
-| **A7** | Stage 3: plain LM + restricted runner (not PandasAI). **End goal:** conversational analysis; **PandasAI is the deferred engine** behind `analysis.py` after thread context (Stage 4). Catalog stays upstream. **Invariant:** analysis / LLM never receive personal columns; CSV may when explicitly approved. Planning LMs stay description-only (no rows). |
+| **A7** | Stage 3–4: plain LM + restricted runner + thread follow-ups (not PandasAI). **End goal:** conversational analysis; **PandasAI is the deferred engine** behind `analysis.py`. Catalog stays upstream YAML. **Invariant:** analysis / LLM never receive **row-level** personal extracts (low-cardinality personal dimensions may remain for charts); CSV may keep personal when explicitly approved. Planning LMs stay description-only (no rows). |
 | **A8** | Admins authored in YAML; seed upserts into `governance.admins`; runtime reads the table only. |
+| **A9** | Semantic catalog is **YAML-only** (`semantic_layer/`) at runtime. Do not read or seed `governance.datasets` / `columns` / `metrics`. Revisit a DB catalog only for future cross-datastore analysis. |
 
 ### A1 — Scenario catalog (gates)
 
@@ -177,7 +254,7 @@ install early (AGENTS.md).
 
 # Stage 0 — Foundations — DONE
 
-**Gate:** smoke test — catalog + admin lookup from seed.
+**Gate:** smoke test — YAML catalog + admin lookup from seed.
 `pytest -q tests/test_smoke_governance.py` green.
 
 ### 0.1 Rename control_plane → governance
@@ -195,14 +272,19 @@ install early (AGENTS.md).
 
 ### 0.3 Governance migration
 
-1. **Build:** `CREATE SCHEMA governance`; admins, catalog, approvals, audit.
+1. **Build:** `CREATE SCHEMA governance`; admins, approvals, audit
+   (plus unused legacy catalog tables from early design).
    `PostgresSaver.setup()` separate.
-2. **Files:** `migrations/001_governance.sql` (+ later `002_catalog_relations.sql`).
+2. **Files:** `migrations/001_governance.sql` (+ `002_catalog_relations.sql`,
+   `003_thread_context.sql`).
 
-### 0.4 Semantic YAML → catalog tables
+### 0.4 Semantic YAML (runtime source of truth)
 
-1. **Build:** Load `semantic_layer/` into governance (incl. relationships /
-   golden queries via richer YAML).
+1. **Build:** Read `semantic_layer/` at runtime (datasets, columns, metrics,
+   relationships, golden queries). Do **not** copy into governance tables;
+   revisit a DB catalog only if/when cross-datastore analysis needs it.
+   Legacy `governance.datasets` / `columns` / `metrics` tables may remain
+   from older migrations but are unused.
 
 ### 0.5 Seed script + in-repo admin list
 
@@ -317,7 +399,7 @@ in-thread without a full new request every time.
 
 1. **Build:** Implement behind `analysis.py` seam; input = **PII-stripped
    post-guard** frame (+ Stage 4 thread context for follow-ups). Catalog remains
-   our upstream YAML→governance brief — do **not** bury a second semantic layer
+   our upstream YAML catalog brief — do **not** bury a second semantic layer
    inside PandasAI.
 2. **Gate (blocking):** Prove whether PandasAI puts dataframe rows in prompts.
    Non-personal rows may be acceptable for conversational analysis; **personal
@@ -338,8 +420,10 @@ test green; catalog still single source of truth.
 1. **Approve without personal data:** prefer not selecting personal columns
    (SQL rewrite / column projection) vs execute-then-strip only.
 2. **`READONLY_DATABASE_URL`** for business query execution (close A3).
-3. **Catalog/ops:** safer admin deactivate-on-seed, richer golden queries on
-   thin datasets, dual YAML↔DB production decision documented.
+3. **Catalog/ops:** safer admin deactivate-on-seed; richer golden queries on
+   thin datasets. **Decision:** YAML-only semantic layer for now; reconsider a
+   DB-backed catalog only when cross-datastore analysis needs it (may then
+   drop unused legacy `governance.datasets` / `columns` / `metrics` tables).
 
 **Stage 6 done when:** strip-or-project behavior covered by tests; read-only
 execute path documented and used when URL set.

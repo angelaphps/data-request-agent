@@ -1,4 +1,8 @@
-"""Governance database: admins · approvals · catalog · audit · checkpointer seam."""
+"""Governance database: admins · approvals · audit · checkpointer seam.
+
+Semantic meanings are read from ``semantic_layer/`` YAML via ``catalog``,
+not from governance catalog tables (legacy tables may still exist unused).
+"""
 
 from __future__ import annotations
 
@@ -69,215 +73,62 @@ class Governance:
         return len(admins)
 
     def get_dataset(self, name: str) -> dict[str, Any] | None:
-        with self.connect() as conn:
-            dataset = conn.execute(
-                """
-                SELECT name, description, owner, sensitivity, table_schema, table_name
-                FROM governance.datasets
-                WHERE name = %s
-                """,
-                (name,),
-            ).fetchone()
-            if dataset is None:
-                return None
-            columns = conn.execute(
-                """
-                SELECT name, description, sensitivity
-                FROM governance.columns
-                WHERE dataset_name = %s
-                ORDER BY name
-                """,
-                (name,),
-            ).fetchall()
-        result = dict(dataset)
-        result["columns"] = list(columns)
-        return result
+        """Return dataset from YAML catalog (not governance tables)."""
+        from data_request_agent.catalog import get_semantic_catalog
+
+        ds = get_semantic_catalog().get_dataset(name)
+        if ds is None:
+            return None
+        return {
+            "name": ds["name"],
+            "description": ds.get("description"),
+            "owner": ds.get("owner"),
+            "sensitivity": ds.get("sensitivity", "none"),
+            "table_schema": ds["table_schema"],
+            "table_name": ds["table_name"],
+            "columns": [
+                {
+                    "name": c["name"],
+                    "description": c.get("description"),
+                    "sensitivity": c.get("sensitivity", "none"),
+                }
+                for c in ds.get("columns") or []
+            ],
+        }
 
     def get_metric(self, name: str) -> dict[str, Any] | None:
-        with self.connect() as conn:
-            row = conn.execute(
-                """
-                SELECT name, definition, expression, dataset_name
-                FROM governance.metrics
-                WHERE name = %s
-                """,
-                (name,),
-            ).fetchone()
-        return dict(row) if row else None
+        """Return metric from YAML catalog (not governance tables)."""
+        from data_request_agent.catalog import get_semantic_catalog
+
+        m = get_semantic_catalog().get_metric(name)
+        if m is None:
+            return None
+        return {
+            "name": m["name"],
+            "definition": m.get("definition") or "",
+            "expression": m.get("expression") or "",
+            "dataset_name": m.get("dataset_name") or m.get("dataset") or "",
+        }
 
     def list_metric_names(self) -> list[str]:
-        with self.connect() as conn:
-            rows = conn.execute(
-                "SELECT name FROM governance.metrics ORDER BY name"
-            ).fetchall()
-        return [r["name"] for r in rows]
+        from data_request_agent.catalog import get_semantic_catalog
+
+        return get_semantic_catalog().metric_names()
 
     def load_catalog_from_yaml(self, semantic_layer_dir: str | Path) -> dict[str, Any]:
-        """Load semantic_layer YAML into governance catalog tables.
+        """Validate YAML catalog only — does not write governance catalog tables.
 
-        Runtime lookups use the tables; the YAML files are the authored source.
-        Accepts original (columns/tables) and richer (fields/relations/measures/
-        golden_queries) dataset YAML.
+        Runtime reads ``semantic_layer/`` directly. Kept for older scripts/tests.
         """
-        from data_request_agent.catalog_yaml import normalize_dataset_doc
+        from data_request_agent.catalog import load_semantic_catalog
 
-        root = Path(semantic_layer_dir)
-        datasets_dir = root / "datasets"
-        metrics_path = root / "metrics.yaml"
-
-        payload: dict[str, Any] = {
-            "datasets": [],
-            "metrics": [],
-            "relationships": [],
-            "golden_queries": [],
-        }
-        files_blob = ""
-
-        with self.connect() as conn:
-            # Full replace so removed YAML files do not linger in the tables.
-            conn.execute("DELETE FROM governance.golden_queries")
-            conn.execute("DELETE FROM governance.relationships")
-            conn.execute("DELETE FROM governance.metrics")
-            conn.execute("DELETE FROM governance.columns")
-            conn.execute("DELETE FROM governance.datasets")
-
-            for path in sorted(datasets_dir.glob("*.yaml")):
-                raw = path.read_text()
-                files_blob += raw
-                data = yaml.safe_load(raw) or {}
-                norm = normalize_dataset_doc(data)
-                payload["datasets"].append(norm)
-                conn.execute(
-                    """
-                    INSERT INTO governance.datasets (
-                        name, description, owner, sensitivity, table_schema, table_name
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    """,
-                    (
-                        norm["name"],
-                        norm["description"],
-                        norm.get("owner"),
-                        norm.get("sensitivity", "none"),
-                        norm["table_schema"],
-                        norm["table_name"],
-                    ),
-                )
-                for col in norm["columns"]:
-                    conn.execute(
-                        """
-                        INSERT INTO governance.columns (
-                            dataset_name, name, description, sensitivity,
-                            data_type, role
-                        )
-                        VALUES (%s, %s, %s, %s, %s, %s)
-                        """,
-                        (
-                            norm["name"],
-                            col["name"],
-                            col.get("description", ""),
-                            col.get("sensitivity", "none"),
-                            col.get("data_type"),
-                            col.get("role"),
-                        ),
-                    )
-                for rel in norm["relationships"]:
-                    payload["relationships"].append(rel)
-                    conn.execute(
-                        """
-                        INSERT INTO governance.relationships (
-                            from_dataset, from_column, to_dataset, to_column, description
-                        )
-                        VALUES (%s, %s, %s, %s, %s)
-                        ON CONFLICT DO NOTHING
-                        """,
-                        (
-                            rel["from_dataset"],
-                            rel["from_column"],
-                            rel["to_dataset"],
-                            rel["to_column"],
-                            rel.get("description", ""),
-                        ),
-                    )
-                for measure in norm["measures"]:
-                    payload["metrics"].append(measure)
-                    conn.execute(
-                        """
-                        INSERT INTO governance.metrics (
-                            name, definition, expression, dataset_name
-                        )
-                        VALUES (%s, %s, %s, %s)
-                        ON CONFLICT (name) DO UPDATE SET
-                            definition = EXCLUDED.definition,
-                            expression = EXCLUDED.expression,
-                            dataset_name = EXCLUDED.dataset_name
-                        """,
-                        (
-                            measure["name"],
-                            measure["definition"],
-                            measure["expression"],
-                            measure["dataset"],
-                        ),
-                    )
-                for gq in norm["golden_queries"]:
-                    payload["golden_queries"].append(gq)
-                    conn.execute(
-                        """
-                        INSERT INTO governance.golden_queries (
-                            name, dataset_name, description, sql
-                        )
-                        VALUES (%s, %s, %s, %s)
-                        """,
-                        (
-                            gq["name"],
-                            gq["dataset_name"],
-                            gq["description"],
-                            gq["sql"],
-                        ),
-                    )
-
-            if metrics_path.exists():
-                raw = metrics_path.read_text()
-                files_blob += raw
-                metrics_doc = yaml.safe_load(raw) or {}
-                metrics = metrics_doc.get("metrics") or []
-                for metric in metrics:
-                    payload["metrics"].append(metric)
-                    conn.execute(
-                        """
-                        INSERT INTO governance.metrics (
-                            name, definition, expression, dataset_name
-                        )
-                        VALUES (%s, %s, %s, %s)
-                        ON CONFLICT (name) DO UPDATE SET
-                            definition = EXCLUDED.definition,
-                            expression = EXCLUDED.expression,
-                            dataset_name = EXCLUDED.dataset_name
-                        """,
-                        (
-                            metric["name"],
-                            metric["definition"],
-                            metric["expression"],
-                            metric["dataset"],
-                        ),
-                    )
-
-            checksum = hashlib.sha256(files_blob.encode()).hexdigest()
-            conn.execute(
-                """
-                INSERT INTO governance.catalog_versions (source_path, checksum, payload)
-                VALUES (%s, %s, %s)
-                """,
-                (str(root), checksum, Jsonb(payload)),
-            )
-            conn.commit()
-
+        cat = load_semantic_catalog(semantic_layer_dir)
         return {
-            "checksum": checksum,
-            "dataset_count": len(payload["datasets"]),
-            "metric_count": len(payload["metrics"]),
-            "relationship_count": len(payload["relationships"]),
-            "golden_query_count": len(payload["golden_queries"]),
+            "dataset_count": len(cat.datasets),
+            "metric_count": len(cat.metrics),
+            "relationship_count": len(cat.relationships),
+            "golden_query_count": len(cat.golden_queries),
+            "source": "semantic_layer_yaml",
         }
 
     def audit(

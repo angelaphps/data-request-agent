@@ -195,31 +195,10 @@ def inspect_sql(
     )
 
 
-def load_catalog_objects(gov) -> dict[tuple[str, str], CatalogObject]:
-    """Build allowlist from governance catalog tables."""
-    out: dict[tuple[str, str], CatalogObject] = {}
-    with gov.connect() as conn:
-        datasets = conn.execute(
-            """
-            SELECT name, table_schema, table_name
-            FROM governance.datasets
-            """
-        ).fetchall()
-        for ds in datasets:
-            cols = conn.execute(
-                """
-                SELECT name, sensitivity
-                FROM governance.columns
-                WHERE dataset_name = %s
-                """,
-                (ds["name"],),
-            ).fetchall()
-            schema = ds["table_schema"].lower()
-            table = ds["table_name"].lower()
-            out[(schema, table)] = CatalogObject(
-                schema=schema,
-                table=table,
-                columns=frozenset(c["name"] for c in cols),
-                column_sensitivity={c["name"]: c["sensitivity"] for c in cols},
-            )
-    return out
+def load_catalog_objects(
+    semantic_layer_dir: str | None = None,
+) -> dict[tuple[str, str], CatalogObject]:
+    """Build allowlist from ``semantic_layer/`` YAML (not governance tables)."""
+    from data_request_agent.catalog import get_semantic_catalog
+
+    return get_semantic_catalog(semantic_layer_dir).catalog_objects()

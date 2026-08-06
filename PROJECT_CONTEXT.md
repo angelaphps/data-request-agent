@@ -27,6 +27,10 @@ The guiding trade-off, stated once: a secure agent nobody wants to use is a fail
   **Analysis** strips **row-level** personal extracts (high-cardinality);
   low-cardinality personal *dimensions* (e.g. a few device types) may remain
   so charts keep a group axis. Planning LMs stay description-only.
+- A semantic catalog authored as YAML under `semantic_layer/` and read
+  directly at runtime (single location for meanings until a future
+  cross-datastore need appears). **Next repo:** rewrite that YAML for the
+  real warehouse; do not seed meanings into Postgres.
 - A complete audit trail tied to each request.
 
 **Out of scope (deferred, each behind a seam that exists in the MVP):**
@@ -36,7 +40,7 @@ The guiding trade-off, stated once: a secure agent nobody wants to use is a fail
   unstructured data) and the guard policies unstructured data would require.
   BigQuery itself is deferred post-MVP but the `TabularStore` seam is in place.
 - Approval tiers, per-dataset approvers, delegation, standing grants.
-- Management interfaces for administrators, catalog, or flags (hand-seeded for MVP).
+- Management interfaces for administrators or catalog (admins YAML→table; catalog YAML files for MVP).
 - A language-model "critic" that reviews whether an analysis answered the question.
 
 ## Architecture Summary
@@ -60,7 +64,7 @@ One orchestrated flow with five subsystems, plus a small governance database the
   still never high-cardinality personal extracts. The reply lands in the
   requester's private thread.
 
-The **governance database** is the agent's own small database: who the administrators are, recorded approvals, sensitivity flags, the audit log, saved state for waiting requests, and the **semantic layer** — the central catalog of dataset, table, column, and measure meanings that Intake, the Planner, Approval, and Delivery all read from. It is authored as files in this repository and loaded into the running agent; the analysis tool receives a small per-request slice generated from it, never its own copy.
+The **governance database** is the agent's own small database: who the administrators are, recorded approvals, the audit log, and saved state for waiting requests. The **semantic layer** — dataset, table, column, and measure meanings — is authored under `semantic_layer/` and read directly at runtime (one location until a future cross-datastore need). Intake, the Planner, Approval, and Delivery all read that YAML catalog; the analysis tool receives a small per-request slice generated from it, never its own copy.
 
 Three subsystems contain a language-model step (understanding the request, drafting the query, writing the analysis steps); each is immediately followed by a deterministic check. Everything else — routing, execution, guarding, delivery, audit — is plain code.
 
@@ -71,7 +75,9 @@ Three subsystems contain a language-model step (understanding the request, draft
 - Their follow-up answers to clarifying questions, and their Run/Cancel choice on the plan preview.
 - An administrator's approve/decline on the approval card.
 - The semantic layer: descriptions and measure definitions authored in this repository.
-- Seeded control data: the administrators list, sensitivity flags, and the synthetic business data.
+- Control data: administrators list (YAML → `governance.admins` table);
+  sensitivity and meanings in `semantic_layer/` YAML (read at runtime, not
+  seeded into Postgres); synthetic business rows in the business store.
 
 **Outputs:**
 - To the requester, in their private thread: a plain-language plan preview; status updates while waiting; and the result — a downloadable file, or an answer with a small table and chart image — showing what was run and when the data was read. When the agent cannot help: a plain reason and what it *can* answer.
@@ -92,7 +98,7 @@ Three subsystems contain a language-model step (understanding the request, draft
 
 **Analysis replies stay compact in Slack.** An analysis request returns, in the requester's private thread: a direct text answer, an inline markdown summary table (≤ `analysis_summary_max_rows`, default 20 — a preview, not a dump), and a chart PNG. Full row extracts remain the file-delivery path.
 
-**Analysis engine (MVP vs end goal).** Today’s analysis is intentionally basic (“dumb”): a schema-only LM proposes groupby/aggregation/chart choices; our restricted pandas runner + matplotlib produce a one-shot answer, table, and PNG on a **guarded** frame (row-level personal extracts stripped; low-cardinality dimensions may remain for charts). **End goal:** conversational analysis — follow-ups about that result in the same thread. **PandasAI is the deferred engine for that** (swap behind `analysis.py`), still **downstream of the guard** (execute → results check → guard → analysis frame → engine), still using the central upstream catalog — not a second buried semantic layer, and never fed raw executor output or high-cardinality personal extracts. Delivery, approval, and Slack shaping stay put.
+**Analysis engine (MVP vs end goal).** Today’s analysis is intentionally basic (“dumb”): a schema-only LM proposes groupby/aggregation/chart choices; our restricted pandas runner + matplotlib produce a one-shot answer, table, and PNG on a **guarded** frame (row-level personal extracts stripped; low-cardinality dimensions may remain for charts). **Same-thread follow-ups** (Stage 4) reuse stored aggregates/summary only — never high-cardinality personal extracts. **End goal:** richer conversational analysis. **PandasAI is the deferred engine for that** (swap behind `analysis.py`), still **downstream of the guard** (execute → results check → guard → analysis frame → engine), still using the upstream YAML catalog — not a second buried semantic layer, and never fed raw executor output or high-cardinality personal extracts. Delivery, approval, and Slack shaping stay put.
 
 **Honesty over confidence.** The agent asks rather than guesses, previews rather than surprises, names an alternative when it declines, and flags a result that looks wrong rather than delivering it with a straight face. Trust in the answers is the product; the checks exist to protect it.
 

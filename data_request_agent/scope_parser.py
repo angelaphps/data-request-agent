@@ -214,92 +214,16 @@ def make_llm_scope_parser(
     return parse_ask
 
 
-def catalog_text_from_governance(gov) -> str:
-    """Build description-only catalog brief for scope/SQL LLMs.
+def catalog_text_from_yaml(semantic_layer_dir: str | None = None) -> str:
+    """Build description-only catalog brief from ``semantic_layer/`` YAML."""
+    from data_request_agent.catalog import get_semantic_catalog
 
-    Relationships and golden queries are listed first so joins are explicit.
-    """
-    lines: list[str] = []
-    with gov.connect() as conn:
-        rels = conn.execute(
-            """
-            SELECT from_dataset, from_column, to_dataset, to_column, description
-            FROM governance.relationships
-            ORDER BY from_dataset, from_column
-            """
-        ).fetchall()
-        if rels:
-            lines.append("JOIN KEYS (use these — do not invent relationships):")
-            for r in rels:
-                lines.append(
-                    f"  - {r['from_dataset']}.{r['from_column']} → "
-                    f"{r['to_dataset']}.{r['to_column']}"
-                    + (f" — {r['description']}" if r.get("description") else "")
-                )
-            lines.append("")
+    return get_semantic_catalog(semantic_layer_dir).catalog_brief_text()
 
-        golden = conn.execute(
-            """
-            SELECT name, dataset_name, description, sql
-            FROM governance.golden_queries
-            ORDER BY name
-            """
-        ).fetchall()
-        if golden:
-            lines.append(
-                "GOLDEN QUERY EXAMPLES (patterns only — adapt; still inspect/trial):"
-            )
-            for g in golden:
-                lines.append(f"  - {g['name']} ({g['dataset_name']}): {g['description']}")
-                lines.append(f"    SQL: {g['sql']}")
-            lines.append("")
 
-        datasets = conn.execute(
-            """
-            SELECT name, description, sensitivity, table_schema, table_name
-            FROM governance.datasets
-            ORDER BY name
-            """
-        ).fetchall()
-        for ds in datasets:
-            lines.append(
-                f"Dataset {ds['name']} ({ds['table_schema']}.{ds['table_name']}, "
-                f"sensitivity={ds['sensitivity']}): {ds['description']}"
-            )
-            cols = conn.execute(
-                """
-                SELECT name, description, sensitivity, data_type, role
-                FROM governance.columns
-                WHERE dataset_name = %s
-                ORDER BY name
-                """,
-                (ds["name"],),
-            ).fetchall()
-            for c in cols:
-                extra = []
-                if c.get("data_type"):
-                    extra.append(str(c["data_type"]))
-                if c.get("role"):
-                    extra.append(f"role={c['role']}")
-                extra.append(f"sens={c['sensitivity']}")
-                lines.append(
-                    f"  - column {c['name']} [{', '.join(extra)}]: {c['description']}"
-                )
-        metrics = conn.execute(
-            """
-            SELECT name, definition, dataset_name, expression
-            FROM governance.metrics
-            ORDER BY name
-            """
-        ).fetchall()
-        lines.append("Metrics / measures:")
-        for m in metrics:
-            expr = f" | {m['expression']}" if m.get("expression") else ""
-            lines.append(
-                f"  - {m['name']} (dataset={m['dataset_name']}): "
-                f"{m['definition']}{expr}"
-            )
-    return "\n".join(lines)
+def catalog_text_from_governance(gov=None) -> str:
+    """Deprecated alias — YAML only; ``gov`` ignored."""
+    return catalog_text_from_yaml()
 
 
 def build_live_parse_ask(*, settings, gov) -> Callable[..., ParsedAsk]:
@@ -309,6 +233,7 @@ def build_live_parse_ask(*, settings, gov) -> Callable[..., ParsedAsk]:
         return catalog_keyword_parser
 
     os.environ.setdefault("OPENAI_API_KEY", settings.openai_api_key)
+    layer = settings.semantic_layer_dir
     return make_llm_scope_parser(
-        catalog_text_provider=lambda: catalog_text_from_governance(gov),
+        catalog_text_provider=lambda: catalog_text_from_yaml(layer),
     )

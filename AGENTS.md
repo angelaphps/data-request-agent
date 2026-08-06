@@ -50,10 +50,11 @@ Implementation stages: [`PLAN.md`](PLAN.md). Product / setup: [`README.md`](READ
   runs, including retries and requests resumed after a wait.
 - The query path is read-only, enforced by the database account
   (`READONLY_DATABASE_URL` when set; else business URL until Stage 6).
-- `semantic_layer/` is the authored source of truth for meanings; seed
-  loads it into governance tables; runtime reads the **tables**. Anything
-  the analysis tool receives is generated from that catalog per request —
-  never a second buried semantic layer inside an analysis engine.
+- `semantic_layer/` YAML is the **only** runtime source of truth for
+  meanings (datasets, columns, metrics, joins, golden queries). Do not
+  read catalog from governance tables. Seed admins into the `admins`
+  table; do not seed the semantic catalog into the DB. Cross-datastore
+  catalog storage can wait until that need is real.
 - New datastores implement `stores.TabularStore` (MVP business data:
   `PostgresStore` + dummy Postgres; post-MVP: `BigQueryStore` for the
   production BigQuery dataset). New delivery targets implement
@@ -66,8 +67,8 @@ Implementation stages: [`PLAN.md`](PLAN.md). Product / setup: [`README.md`](READ
 - Python: PEP8 style, Ruff linting, NumPy-style docstrings.
 - Use pytest for testing; prefer pandas/NumPy for analysis ops.
 - Confirm before installing new dependencies (`poetry add`).
-- Never write secrets; always use environment variables. The catalog
-  stores the *name* of a credential, never the credential.
+- Never write secrets; always use environment variables. Future store
+  config may store a credential *name* in catalog/env — never the secret.
 
 ## Agent instructions
 

@@ -21,7 +21,7 @@ from data_request_agent.analysis import (
     AnalysisPlan,
     build_live_analysis_planner,
     run_analysis,
-    schema_slice_from_governance,
+    schema_slice_from_catalog,
 )
 from data_request_agent.config import Settings
 from data_request_agent.destinations import Destination, rows_to_csv
@@ -90,7 +90,7 @@ def guard_and_deliver(
         for c in (plan.get("approved_columns") or plan.get("trial_columns") or [])
     ]
 
-    catalog = load_catalog_objects(gov)
+    catalog = load_catalog_objects()
     personal_cols: set[str] = set()
     for obj in catalog.values():
         for name, sens in obj.column_sensitivity.items():
@@ -210,8 +210,7 @@ def _deliver_analysis(
 ) -> AgentState:
     frame = pd.DataFrame(analysis_rows)
     dtypes = {c: str(frame[c].dtype) for c in frame.columns} if not frame.empty else {}
-    schema = schema_slice_from_governance(
-        gov,
+    schema = schema_slice_from_catalog(
         column_names=list(frame.columns),
         dtypes=dtypes,
     )

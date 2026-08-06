@@ -1,6 +1,9 @@
 -- Governance schema for data-request-agent
 -- Apply with: psql "$DATABASE_URL" -f migrations/001_governance.sql
 --
+-- Runtime semantic meanings live in semantic_layer/ YAML, not in the
+-- datasets/columns/metrics tables below (those are unused legacy leftovers).
+--
 -- LangGraph checkpoints are NOT created here. Bootstrap them separately via
 -- PostgresSaver.setup() (langgraph-checkpoint-postgres).
 

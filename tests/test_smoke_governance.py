@@ -1,4 +1,4 @@
-"""Stage 0 gate: governance catalog + admin lookup + business DB probe."""
+"""Stage 0 gate: YAML catalog + admin lookup + business DB probe."""
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ def test_real_admin_seeded_from_yaml(gov: Governance) -> None:
     assert gov.is_admin("U0B9N7SB1CH") is True
 
 
-def test_catalog_users_dataset(gov: Governance) -> None:
+def test_catalog_users_dataset_from_yaml(gov: Governance) -> None:
     dataset = gov.get_dataset("users")
     assert dataset is not None
     assert dataset["table_schema"] == "public"
@@ -41,9 +41,10 @@ def test_catalog_users_dataset(gov: Governance) -> None:
     cols = {c["name"]: c["sensitivity"] for c in dataset["columns"]}
     assert cols["user_id"] == "none"
     assert cols["country"] == "internal"
+    assert cols["device_type"] == "personal"
 
 
-def test_catalog_metric_total_revenue(gov: Governance) -> None:
+def test_catalog_metric_total_revenue_from_yaml(gov: Governance) -> None:
     metric = gov.get_metric("total_revenue_usd")
     assert metric is not None
     assert metric["dataset_name"] == "payments"

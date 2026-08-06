@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from langgraph.types import interrupt
 
+from data_request_agent.catalog import get_semantic_catalog
 from data_request_agent.governance import Governance
 from data_request_agent.proposers import AskParser, catalog_keyword_parser
 from data_request_agent.state import AgentState
@@ -59,7 +60,7 @@ def parse(
     parse_ask: AskParser = catalog_keyword_parser,
     max_clarify: int = 2,
 ) -> AgentState:
-    metrics = gov.list_metric_names()
+    metrics = get_semantic_catalog().metric_names()
     text = state.get("raw_text") or ""
     parsed = parse_ask(text, metric_names=metrics)
     request = {

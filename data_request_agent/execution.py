@@ -83,7 +83,7 @@ def recheck_and_run(
         }
 
     # Re-inspect SQL against current catalog (retries / stale waits cannot widen).
-    catalog = load_catalog_objects(gov)
+    catalog = load_catalog_objects()
     inspected = inspect_sql(sql, catalog=catalog)
     if not inspected.ok:
         gov.audit(

@@ -58,53 +58,30 @@ class AnalysisResult(BaseModel):
     context_had_no_rows: bool = True
 
 
+def schema_slice_from_catalog(
+    *,
+    column_names: list[str],
+    dtypes: dict[str, str] | None = None,
+    semantic_layer_dir: str | None = None,
+) -> list[dict[str, str]]:
+    """Description-only schema for columns present in the guarded result."""
+    from data_request_agent.catalog import get_semantic_catalog
+
+    return get_semantic_catalog(semantic_layer_dir).schema_slice(
+        column_names=column_names,
+        dtypes=dtypes,
+    )
+
+
+# Back-compat alias used by older tests / callers.
 def schema_slice_from_governance(
-    gov: Governance,
+    gov: Governance | None = None,
     *,
     column_names: list[str],
     dtypes: dict[str, str] | None = None,
 ) -> list[dict[str, str]]:
-    """Description-only schema for columns present in the guarded result."""
-    wanted = {c.lower(): c for c in column_names}
-    dtypes = dtypes or {}
-    out: list[dict[str, str]] = []
-    with gov.connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT c.name, c.description, c.sensitivity, c.data_type, d.name AS dataset
-            FROM governance.columns c
-            JOIN governance.datasets d ON d.name = c.dataset_name
-            ORDER BY d.name, c.name
-            """
-        ).fetchall()
-    seen: set[str] = set()
-    for row in rows:
-        key = row["name"].lower()
-        if key not in wanted or key in seen:
-            continue
-        seen.add(key)
-        original = wanted[key]
-        out.append(
-            {
-                "name": original,
-                "description": row["description"] or "",
-                "sensitivity": row["sensitivity"] or "none",
-                "dtype": dtypes.get(original) or dtypes.get(key) or row["data_type"] or "",
-                "dataset": row["dataset"] or "",
-            }
-        )
-    for name in column_names:
-        if name.lower() not in seen:
-            out.append(
-                {
-                    "name": name,
-                    "description": "(no catalog description)",
-                    "sensitivity": "none",
-                    "dtype": dtypes.get(name) or "",
-                    "dataset": "",
-                }
-            )
-    return out
+    """Deprecated: YAML catalog only — ``gov`` is ignored."""
+    return schema_slice_from_catalog(column_names=column_names, dtypes=dtypes)
 
 
 def build_analysis_prompt(

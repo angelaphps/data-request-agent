@@ -56,7 +56,7 @@ Two databases today:
 
 | Role | Env var | Purpose |
 |------|---------|---------|
-| Governance | `DATABASE_URL` | Admins, catalog, approvals, audit log, saved request state (local Postgres) |
+| Governance | `DATABASE_URL` | Admins, approvals, audit log, saved request state (local Postgres) |
 | Business | `BUSINESS_DATABASE_URL` | Dummy Postgres warehouse the SQL queries for the MVP |
 
 Business data is reached through `stores.TabularStore`. **MVP:**
@@ -65,10 +65,10 @@ reads a **BigQuery** dataset via `BigQueryStore` (stub in `stores.py` —
 not wired yet). Planner, approval, guard, and delivery stay put; only the
 store adapter and catalog/SQL dialect work change.
 
-The **semantic layer** (`semantic_layer/*.yaml`) defines tables, columns,
-joins, measures, and example queries. `scripts/seed.py` loads that YAML and
-`config/admins.yaml` into the governance database. At runtime the bot reads
-those **tables** — edit YAML, then re-seed.
+The **semantic layer** (`semantic_layer/*.yaml`) is the **only** place
+meanings live at runtime (tables, columns, joins, measures, example
+queries). Edit YAML and restart — no catalog seed into Postgres.
+`scripts/seed.py` loads **admins** into `governance.admins` only.
 
 Language models draft the request scope, the SQL, and (for analysis) the chart
 plan. Deterministic checks always follow: SQL inspection, trial run,
@@ -110,18 +110,21 @@ Fill in `.env`:
 `SLACK_SIGNING_SECRET` is optional for Socket Mode. See `.env.example` for
 tunables (`APPROVAL_EXPIRY_HOURS`, `ANALYSIS_SUMMARY_MAX_ROWS`, and so on).
 
-Create the governance schema, then seed:
+Create the governance schema, then seed admins:
 
 ```bash
 psql "$DATABASE_URL" -f migrations/001_governance.sql
 psql "$DATABASE_URL" -f migrations/002_catalog_relations.sql
+psql "$DATABASE_URL" -f migrations/003_thread_context.sql
 
 # Add your Slack user ID (U…) to config/admins.yaml, then:
 poetry run python scripts/seed.py
 ```
 
+`001`/`002` still create unused legacy catalog tables (datasets/columns/…) —
+runtime does **not** read them; meanings come from `semantic_layer/` YAML.
 Keep `U_ADMIN` in the admin file for tests. Role checks use the
-`governance.admins` table only — YAML changes take effect after seed.
+`governance.admins` table only — admin YAML changes take effect after seed.
 
 ```bash
 # Start the bot
@@ -170,7 +173,7 @@ DM ask → (maybe 1–2 clarifying questions) → plan preview → **Submit** or
 | **Analysis** | Either | `analyze average session duration by country` | Text + small table + chart (use words like analyze / chart / trend / stats) |
 | **Analysis (chart)** | Either | `chart total revenue by country` | Same analysis-style reply |
 | **Personal data — strip** | Non-admin + admin | `users sample with device_type` (or “users including device type”) | Card shows personal flag → **Approve without personal data** → CSV **without** `device_type` |
-| **Personal data — keep on CSV** | Non-admin + admin | Same ask → **Approve** | CSV **may include** `device_type`; analysis path would still never keep PII |
+| **Personal data — keep on CSV** | Non-admin + admin | Same ask → **Approve** | CSV **may include** `device_type`; analysis keeps low-card dimensions for charts but strips high-card personal extracts |
 | **Clarify** | Either | Something vague, e.g. `session stuff` or `give me the numbers` | Bot asks ≤2 clarifying questions before a plan |
 | **Public redirect** | Anyone | @mention the bot in a **public** channel | Bot does **not** run there; asks you to DM it |
 
@@ -203,10 +206,11 @@ channel detection with synthetic IDs. Still verify live Bolt buttons / @mention:
 
 ```text
 data_request_agent/   Python app (Slack adapter, graph, SQL, delivery)
-semantic_layer/       Catalog YAML (source of truth for meanings)
-config/admins.yaml    Admin list to seed
-migrations/           Governance SQL
-scripts/              seed.py, expire_approvals.py
+  catalog.py          Loads semantic_layer/ YAML at runtime
+semantic_layer/       Catalog YAML (only source of truth for meanings)
+config/admins.yaml    Admin list → governance.admins via seed
+migrations/           Governance SQL (admins/approvals/audit; legacy catalog tables unused)
+scripts/              seed.py (admins only), expire_approvals.py
 tests/                Scenario and unit tests
 ```
 
@@ -214,24 +218,38 @@ tests/                Scenario and unit tests
 
 ## Next stages
 
-Stages 0–3 (spine, resilience, one-shot analysis) are done — that is the MVP.
-Detail and gates live in [`PLAN.md`](PLAN.md).
+Stages 0–4 (spine, resilience, one-shot analysis, thread follow-ups) are done
+in this demo repo. For the **real-data repo**, start with semantic-layer rewrite
++ warehouse cutover, then Stages 5 → 6 → BigQuery. Full handoff:
+[`PLAN.md` — Handoff](PLAN.md#handoff--next-repo-real-data).
 
-| Stage | Focus |
+| Order | Focus |
 |-------|--------|
-| **4** | Thread memory so analysis follow-ups stay in-thread (PII-stripped context only) |
-| **5** | Smarter / conversational analysis (PandasAI behind `analysis.py`; never personal columns to the LLM) |
-| **6** | PII projection before execute; `READONLY_DATABASE_URL`; ops hardening |
-| **Later** | Swap business store to **BigQuery** (`BigQueryStore` behind `TabularStore`) |
+| **R0** | Real warehouse + rewrite `semantic_layer/` (YAML only; no DB catalog) |
+| **4** | ~~Thread memory / follow-ups~~ — **done** |
+| **5** | Smarter / conversational analysis (allowlisted runner → PandasAI behind `analysis.py`) |
+| **6** | PII projection before execute; read-only business credentials |
+| **Later** | `BigQueryStore` if production is BigQuery |
+
+### Semantic layer (keep one location)
+
+- **Now / real repo:** author real datasets, columns, sensitivity, metrics,
+  JOIN KEYS, and golden queries under `semantic_layer/`. Edit YAML → restart.
+  Seed never writes catalog rows.
+- **Later:** reconsider a DB-backed catalog only for **cross-datastore**
+  analysis — still one source of truth; never a second layer inside the
+  analysis engine.
 
 Delivery order stays fixed:
 `execute → results check → personal-data guard → file | analysis | future engine`.
 
 Split after the guard: **CSV** may include personal columns when explicitly
-approved; **analysis / LLM** always runs on a PII-stripped frame.
+approved; **analysis / LLM** strips **row-level** personal extracts
+(high-cardinality); low-cardinality personal *dimensions* may remain for
+charts. Planning LMs stay description-only.
 
-Business data today is a **dummy Postgres**; post-MVP the query path targets a
-**BigQuery** dataset through the same adapter — not a rewrite of Slack,
+Business data in **this** repo is a **dummy Postgres**; the next repo should
+target the real warehouse through `TabularStore` — not a rewrite of Slack,
 approval, or delivery.
 
 ---
